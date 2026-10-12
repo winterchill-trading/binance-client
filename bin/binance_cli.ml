@@ -166,9 +166,42 @@ let watch_command =
                | _ -> print_s [%sexp (event : Market_event.t Combined.t)]))))
 ;;
 
+let feed_command =
+  Command.async
+    ~summary:"Print normalized market data (Live_feed) as sexps"
+    (let%map_open.Command config = config_param
+     and symbols =
+       flag "symbol" (one_or_more_as_list string) ~doc:"SYMBOL e.g. BTCUSDT (repeatable)"
+     and streams =
+       flag
+         "streams"
+         (optional_with_default
+            Market_data.Stream.[ Trades; Bbo; L2; Funding ]
+            (Arg_type.comma_separated (Arg_type.create Market_data.Stream.of_string)))
+         ~doc:"STREAMS comma-separated: trades, bbo, l2, funding (default: all)"
+     in
+     fun () ->
+       let%bind feed = Live_feed.create config ~symbols ~streams in
+       let module F = (val feed : Market_data.Feed.S) in
+       let print pipe ~f =
+         Pipe.iter_without_pushback pipe ~f:(fun x ->
+           print_s ~mach:() [%sexp (f x : Market_data.Event.t)])
+       in
+       Deferred.all_unit
+         [ print F.trades ~f:(fun x -> Trade x)
+         ; print F.bbo ~f:(fun x -> Bbo x)
+         ; print F.l2 ~f:(fun x -> L2 x)
+         ; print F.funding ~f:(fun x -> Funding x)
+         ])
+;;
+
 let () =
   Command.group
     ~summary:"Binance USD-M Futures API client"
-    [ "depth", depth_command; "book-ticker", book_ticker_command; "watch", watch_command ]
+    [ "depth", depth_command
+    ; "book-ticker", book_ticker_command
+    ; "watch", watch_command
+    ; "feed", feed_command
+    ]
   |> Command_unix.run
 ;;

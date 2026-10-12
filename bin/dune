@@ -8,6 +8,7 @@
   core_unix.command_unix
   binance-client
   binance-protocol
+  market-data
   uri)
  (preprocess
   (pps ppx_jane)))
