@@ -248,6 +248,7 @@ val create
 type t
 val start : (* same arguments as [create] *) -> t Deferred.t
 val feed  : t -> Market_data.Feed.t
+val feed_with_gaps : t -> Market_data.Feed.With_gaps.t   (* the same pipes plus [gaps] *)
 val stats : t -> Stats.t   (* { frames; parse_errors; reconnects } *)
 ```
 
@@ -270,6 +271,12 @@ public streams (no API key), one combined-stream connection per requested stream
   fresh `Snapshot` after the next sync.
 - Reconnects (backoff, resubscription) come from `Venue_net.Ws_client`; undecodable frames
   are logged at debug level and skipped. `close` closes the sockets and all four pipes.
+- `feed_with_gaps` adds a `gaps` pipe of `Market_data.Gap.t`, all with reason `Resync`
+  and stamped from `time_source`: one per reconnect of a stream's connection
+  (`stream = Some s`, `instrument = None`) and one per diff-depth sequence break of a
+  synced book (`stream = Some L2` and the symbol). The first sync at start is not a gap,
+  and an `L2` reconnect does not add per-symbol gaps for the books it drops. The pipe is
+  written without pushback and closes with the feed.
 - `stats` counts text frames received, frames dropped because they did not decode (or
   were error responses) and successful reconnections over all connections.
 - `time_source` (default the wall clock) stamps `recv_ts` and drives reconnection backoff,
