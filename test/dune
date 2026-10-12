@@ -1,0 +1,16 @@
+(library
+ (name binance_client_test)
+ (libraries
+  core
+  async
+  uri
+  yojson
+  binance-client
+  binance-protocol
+  exchange-core
+  mm-core)
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))
