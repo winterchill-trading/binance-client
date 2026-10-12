@@ -1,5 +1,6 @@
 (** A scripted websocket server on a free local port: it accepts every upgrade, records
-    the text frames clients send and lets a test push frames or drop connections. *)
+    the text frames clients send and lets a test push frames or drop connections. It also
+    answers [GET /fapi/v1/depth] with the body given to {!set_depth}. *)
 
 open! Core
 open Async
@@ -13,6 +14,12 @@ val config : t -> Binance_client.Config.t
 
 (** Upgrades accepted so far. *)
 val connections : t -> int
+
+(** The body of the next [GET /fapi/v1/depth] replies (404 until set). *)
+val set_depth : t -> string -> unit
+
+(** [GET /fapi/v1/depth] requests answered so far. *)
+val depth_requests : t -> int
 
 (** Text frames received from clients, oldest first. *)
 val received : t -> string list
