@@ -70,6 +70,35 @@ let%expect_test "order trade updates to fills and order updates" =
   return ()
 ;;
 
+let%expect_test "fills are de-duplicated by trade id" =
+  let seen = Venue.Seen_trades.create () in
+  let updates =
+    [ order_trade_update
+        ~x:"TRADE"
+        ~status:"PARTIALLY_FILLED"
+        ~trade_id:7
+        ~last:"0.01"
+        ~cum:"0.01"
+    ; order_trade_update
+        ~x:"TRADE"
+        ~status:"PARTIALLY_FILLED"
+        ~trade_id:7
+        ~last:"0.01"
+        ~cum:"0.01"
+    ; order_trade_update ~x:"TRADE" ~status:"FILLED" ~trade_id:8 ~last:"0.02" ~cum:"0.03"
+    ]
+  in
+  List.iter updates ~f:(fun u ->
+    Option.iter (Venue.Convert.fill u) ~f:(fun (fill : Mm_core.Fill.t) ->
+      if Venue.Seen_trades.first_time seen fill.trade_id
+      then print_s [%sexp (fill.trade_id : Neutral.Trade_id.t)]));
+  [%expect {|
+    7
+    8
+    |}];
+  return ()
+;;
+
 let order ~status ~tif ~executed =
   { Order.order_id = Order_id.of_int 5
   ; symbol = Symbol.of_string "BTCUSDT"
