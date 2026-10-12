@@ -34,21 +34,37 @@ let api_error error =
   find (Error.sexp_of_t error)
 ;;
 
-let encode_params (config : Config.t) (security : Security.t) ~now params =
+(* [Uri] decodes and re-encodes query strings in its own way (e.g. [%3A] becomes [:]), so
+   a query string is signed in the form [Uri] will send it. *)
+let uri_canonical query =
+  let sent = Uri.path_and_query (Uri.of_string ("http://localhost/?" ^ query)) in
+  String.chop_prefix sent ~prefix:"/?" |> Option.value ~default:query
+;;
+
+let encode_params
+  ?(for_uri = false)
+  (config : Config.t)
+  (security : Security.t)
+  ~now
+  params
+  =
+  let canonical query = if for_uri then uri_canonical query else query in
   match security with
-  | Public | Api_key -> Query.encode params
+  | Public | Api_key -> canonical (Query.encode params)
   | Signed ->
     let timestamp = Timestamp_ms.of_time_ns now in
+    let query =
+      Query.encode
+        (params
+         @ List.filter_opt
+             [ Option.map config.recv_window ~f:(fun w -> "recvWindow", Int.to_string w)
+             ; Some ("timestamp", Int.to_string (Timestamp_ms.to_int timestamp))
+             ])
+      |> canonical
+    in
     (match config.api_secret with
-     | Some secret ->
-       Signature.signed_query ?recv_window:config.recv_window ~secret ~timestamp params
-     | None ->
-       Query.encode
-         (params
-          @ List.filter_opt
-              [ Option.map config.recv_window ~f:(fun w -> "recvWindow", Int.to_string w)
-              ; Some ("timestamp", Int.to_string (Timestamp_ms.to_int timestamp))
-              ]))
+     | None -> query
+     | Some secret -> query ^ "&signature=" ^ Signature.sign ~secret ~query_string:query)
 ;;
 
 let headers (config : Config.t) (security : Security.t) =
@@ -77,7 +93,7 @@ let decode ((status, body) : Venue_net.Http.response) =
 ;;
 
 let call ?(params = []) config security (meth : Cohttp.Code.meth) path =
-  let encoded = encode_params config security ~now:(Time_ns.now ()) params in
+  let now = Time_ns.now () in
   let headers = headers config security in
   let uri = Config.rest_uri config path in
   let response =
@@ -85,11 +101,12 @@ let call ?(params = []) config security (meth : Cohttp.Code.meth) path =
     | `POST | `PUT ->
       Venue_net.Http.request
         ~headers:(("Content-Type", "application/x-www-form-urlencoded") :: headers)
-        ~body:encoded
+        ~body:(encode_params config security ~now params)
         meth
         uri
     | _ ->
       (* Built from the string so the query is sent exactly as encoded (and signed). *)
+      let encoded = encode_params ~for_uri:true config security ~now params in
       let uri =
         if String.is_empty encoded
         then uri

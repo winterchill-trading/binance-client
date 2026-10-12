@@ -30,8 +30,16 @@ val api_error : Error.t -> Api_error.t option
 (** {2 Generic requests} *)
 
 (** [encode_params config security ~now params] is the string sent as query or body:
-    [params], then for [Signed] [recvWindow], [timestamp] and [signature]. *)
-val encode_params : Config.t -> Security.t -> now:Time_ns.t -> Query.t -> string
+    [params], then for [Signed] [recvWindow], [timestamp] and [signature] (over everything
+    before it). With [for_uri] (default [false]) the string is first normalised the way
+    [Uri] re-encodes query strings, so what is signed is exactly what is sent. *)
+val encode_params
+  :  ?for_uri:bool
+  -> Config.t
+  -> Security.t
+  -> now:Time_ns.t
+  -> Query.t
+  -> string
 
 (** Headers sent for [security]: [X-MBX-APIKEY] unless [Public]. *)
 val headers : Config.t -> Security.t -> (string * string) list
