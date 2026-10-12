@@ -204,6 +204,8 @@ let () =
     ; "book-ticker", book_ticker_command
     ; "watch", watch_command
     ; "feed", feed_command
+    ; ( "rebuild-norm"
+      , Market_data.Rebuild_norm.command [ (module Binance_client.Raw_normalizer) ] )
     ]
   |> Command_unix.run
 ;;
