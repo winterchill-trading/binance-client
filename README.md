@@ -66,6 +66,7 @@ dune exec binance-sim -- -port 3300
 binance-cli depth BTCUSDT -limit 5
 binance-cli book-ticker BTCUSDT
 binance-cli watch -book BTCUSDT -agg-trade BTCUSDT -user      # local book, trades, user stream
+binance-cli feed -symbol BTCUSDT -streams trades,bbo           # normalized market-data records
 ```
 
 The simulator takes the `X-MBX-APIKEY` header as the account (any value; new keys are
@@ -80,6 +81,7 @@ export BINANCE_API_KEY=... BINANCE_API_SECRET=...
 binance-cli book-ticker BTCUSDT -network testnet
 binance-cli watch -network testnet -book BTCUSDT -user
 binance-cli watch -network mainnet -route market -agg-trade BTCUSDT -mark-price BTCUSDT
+binance-cli feed -network mainnet -symbol BTCUSDT -streams trades,bbo,l2,funding
 ```
 
 In code: `Config.testnet ~api_key ~api_secret ()` or `Config.mainnet ...`, reading the
@@ -114,8 +116,8 @@ val user_stream_uri : t -> listen_key:string -> Uri.t      (* <ws>[/private]/ws/
 | `mainnet` | `https://fapi.binance.com` | `wss://fstream.binance.com` | yes |
 | `testnet` | `https://demo-fapi.binance.com` | `wss://demo-fstream.binance.com` | no |
 
-Live USD-M routes websocket traffic by path: diff depth on `/public`, other market data
-on `/market`, user data on `/private`; an unrouted `/ws` or `/stream` connection only
+Live USD-M routes websocket traffic by path: diff depth and `@bookTicker` on `/public`,
+other market data on `/market`, user data on `/private`; an unrouted `/ws` or `/stream` connection only
 receives public data, and silently gets nothing for `@aggTrade` or `@markPrice`.
 `routed_ws` adds the prefixes.
 
@@ -207,6 +209,36 @@ every 30 minutes, and on `-1125` from the keepalive or a `listenKeyExpired` even
 new key and replaces the socket (then calls `on_reconnect`, since events may have been
 lost).
 
+### `Live_feed`: normalized market data
+
+```ocaml
+val create
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> Config.t -> symbols:string list -> streams:Market_data.Stream.t list
+  -> Market_data.Feed.t Deferred.t
+```
+
+A [market-data](https://github.com/winterchill-trading/market-data) `Feed.t` from the
+public streams (no API key), one combined-stream connection per requested stream:
+
+| Stream | Binance | Route | `exch_ts` |
+| --- | --- | --- | --- |
+| `Trades` | `<symbol>@aggTrade` (`trade_id` = aggregate id, side = taker) | `/market` | `T` |
+| `Bbo` | `<symbol>@bookTicker` | `/public` | `T` |
+| `L2` | `<symbol>@depth@100ms` + `GET /depth?limit=1000` | `/public` | `T` |
+| `Funding` | `<symbol>@markPrice@1s` (index falls back to mark) | `/market` | `E` |
+
+- `recv_ts` is taken when the frame comes off the socket, before parsing; `on_raw` sees
+  the frame text at that point (subscription acknowledgements included), which is what a
+  `Market_data.Frame_log` recorder stores. On `L2` it also sees each depth snapshot body
+  (re-serialized JSON with `lastUpdateId` and no `e`), so raw logs can be normalized again.
+- `L2` keeps a `Local_book` per symbol: one `Snapshot` (the full book) when it syncs, then
+  every diff event as a `Delta`. A sequence gap or a reconnect drops the book and emits a
+  fresh `Snapshot` after the next sync.
+- Reconnects (backoff, resubscription) come from `Venue_net.Ws_client`; undecodable frames
+  are logged at debug level and skipped. `close` closes the sockets and all four pipes.
+- The conversions are pure and tested on their own in `Feed_normalizer`.
+
 ### `Venue`: the market maker on Binance
 
 `Venue` implements `Mm_core.Venue.S` with `config = Config.t`, so
@@ -252,20 +284,37 @@ Design choices:
 `-mark-price`, `-user`), with `-network local|mainnet|testnet`, `-base-url`, `-ws-url`,
 `-routed`, `-route public|market` and `-debug`.
 
+`feed` prints `Market_data.Event.t` sexps, one per line, from `Live_feed`:
+`-symbol` (repeatable) and `-streams` (comma-separated `trades`, `bbo`, `l2`, `funding`;
+default all). Checked against the simulator with
+
+```sh
+# binance-sim directory
+dune exec binance-sim -- -port 3300
+# binance-client directory
+dune exec binance-cli -- feed -symbol BTCUSDT -streams trades,bbo
+```
+
+```
+(Bbo((instrument((venue Binance)(symbol BTCUSDT)))(exch_ts(2026-10-12 12:21:24.653000000+01:00))(recv_ts(2026-10-12 12:21:24.655117000+01:00))(bid_price 100214.7)(bid_size 0.035)(ask_price 100237.3)(ask_size 0.068)))
+(Trade((instrument((venue Binance)(symbol BTCUSDT)))(exch_ts(2026-10-12 12:21:24.759000000+01:00))(recv_ts(2026-10-12 12:21:24.760146000+01:00))(price 100237.3)(size 0.068)(side Buy)(trade_id 290)))
+```
+
+and against mainnet with `-network mainnet` (all four streams).
+
 ## Unverified
 
 Inherited from binance-protocol (see its
 [spec](https://github.com/winterchill-trading/binance-protocol/blob/main/docs/binance-usdm-spec.md)),
 and only checked against the simulator, which implements the same assumptions:
 
-- Market stream payloads (`depthUpdate`, `aggTrade`, `bookTicker`, `markPriceUpdate`) and
-  the partial-depth shape.
+- The partial-depth payload shape. (`depthUpdate`, `aggTrade`, `bookTicker` and
+  `markPriceUpdate` decode on mainnet, checked with `binance-cli feed`.)
 - `ACCOUNT_UPDATE` position fields; `ORDER_TRADE_UPDATE` `er`.
 - `exchangeInfo` filters other than `PRICE_FILTER` (`LOT_SIZE` is what the venue uses for
   the size step).
 - `batchOrders` sent as a JSON array string with string values.
-- Routing: whether `@bookTicker` is on `/market`, whether the testnet serves routed paths,
-  and the legacy `/ws/<listenKey>` user stream path used when unrouted.
+- Routing: whether the testnet serves routed paths, and the legacy `/ws/<listenKey>` user stream path used when unrouted.
 - The testnet hosts (`demo-fapi`, `demo-fstream`).
 
 Not implemented: RSA/Ed25519 keys, server time synchronisation (`timestamp` is the local
