@@ -283,6 +283,32 @@ public streams (no API key), one combined-stream connection per requested stream
   keepalives and snapshot retries, so tests can run them on a synthetic clock.
 - The conversions are pure and tested on their own in `Feed_normalizer`.
 
+### Reconnect frame loss
+
+Binance market streams do not replay: whatever the venue sends while a connection is
+down is gone. Measured on the synthetic clock in `test_live_feed_stats.ml` and
+`test_live_feed_gaps.ml` (default `Ws_client` backoff, first delay 0.5 s with 20%
+jitter):
+
+- the first reconnect attempt comes between 0.4 s and 0.6 s after the drop (no new
+  connection at 0.39 s, reconnected and resubscribed by 0.6 s); a failed attempt doubles
+  the delay, up to 30 s;
+- on `Trades`, `Bbo` and `Funding` every frame between the last one received and the
+  first one after the resubscription is lost, with nothing to mark it but the gap. At the
+  rates in `test/fixtures` (BTCUSDT mainnet: about 34 aggregate trades, 160 book tickers
+  and 1 mark price per second) a 0.5 s outage loses roughly 17 trades, 80 BBOs and the
+  odd funding record;
+- on `L2` the books are dropped and the diff events after the resubscription are
+  buffered until a fresh `GET /depth?limit=1000` joins them. No `Delta` is emitted
+  between the last one before the drop and the new `Snapshot`; the events in between
+  (about 10 per second per symbol at `@depth@100ms`) are folded into that snapshot, so
+  the book is exact again but the individual changes are lost. In the gap test the drop
+  happened at 0.1 s and the gap and the new `Snapshot` both carry `recv_ts` 0.7 s; each
+  resync costs one depth request (three over the test: start, sequence break,
+  reconnect).
+
+`Gap` records mark both windows, so a consumer knows which stretch to distrust.
+
 ### `Raw_normalizer`: rebuilding `norm/` from raw files
 
 `Raw_normalizer` is `Feed_normalizer` as a `Market_data.Normalizer.S`, so
