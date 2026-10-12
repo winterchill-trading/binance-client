@@ -276,6 +276,24 @@ public streams (no API key), one combined-stream connection per requested stream
   keepalives and snapshot retries, so tests can run them on a synthetic clock.
 - The conversions are pure and tested on their own in `Feed_normalizer`.
 
+### `Raw_normalizer`: rebuilding `norm/` from raw files
+
+`Raw_normalizer` is `Feed_normalizer` as a `Market_data.Normalizer.S`, so
+[market-data](https://github.com/winterchill-trading/market-data)'s `Rebuild_norm` can turn
+market-recorder raw minute files back into event logs:
+
+```ocaml
+Market_data.Rebuild_norm.command [ (module Binance_client.Raw_normalizer) ]
+```
+
+It runs `Feed_normalizer.create_replay`: a book is kept for every symbol whose depth
+updates appear, and the `GET /depth` bodies that `Live_feed` records on the l2 stream are
+treated as frames. A body has no symbol; it belongs to the symbol of the depth updates
+before it in the same recorded series. A body that does not join the buffered updates
+leaves the book waiting for the next recorded one (the live feed fetched again too), and
+`Need_snapshot` outputs are dropped since there is nothing to fetch from. A recorded
+disconnect (empty line) clears the books, as a reconnect does live.
+
 ### `Venue`: the market maker on Binance
 
 `Venue` implements `Mm_core.Venue.S` with `config = Config.t`, so
@@ -316,7 +334,7 @@ Design choices:
 
 ## CLI
 
-`binance-cli` (`bin/binance_cli.ml`) is a smoke-testing tool: `depth`, `book-ticker` and
+`binance-cli` (`bin/binance_cli.ml`) is a smoke-testing tool (plus `rebuild-norm`, below): `depth`, `book-ticker` and
 `watch` (`-depth`, `-book` (local book, top 5), `-book-ticker`, `-agg-trade`,
 `-mark-price`, `-user`), with `-network local|mainnet|testnet`, `-base-url`, `-ws-url`,
 `-routed`, `-route public|market` and `-debug`.
@@ -338,6 +356,13 @@ dune exec binance-cli -- feed -symbol BTCUSDT -streams trades,bbo
 ```
 
 and against mainnet with `-network mainnet` (all four streams).
+
+`rebuild-norm` rebuilds a day of normalized event logs from market-recorder raw files with
+`Raw_normalizer` (the output directory must be new or empty):
+
+```sh
+binance-cli rebuild-norm -data-dir /data/recorder -date 2026-10-12 -out /data/norm-rebuilt
+```
 
 ## Unverified
 
@@ -373,6 +398,13 @@ commission rate endpoints.
   the snapshot with replayed events, deltas, a gap, other symbols, `reset`;
 - `Feed_normalizer` on recorded mainnet frames (`test/fixtures`, see below): every frame
   decodes, with per-stream counts, and the minor words allocated per message;
+- the same fixtures through `Raw_normalizer` (one fresh normalizer per stream, as
+  `rebuild-norm` does per recorded series): identical counts, the snapshot first, and no
+  deltas after a `disconnect` until another snapshot;
+- `Rebuild_norm.run` with `Raw_normalizer` over raw minute files written from the
+  fixtures in the recorder layout (`recv_ts` = event time `E`): 5 files, 459 frames, 450
+  events (150 trades, 200 BBOs, 1 snapshot and 40 deltas, 59 funding records), clean
+  event logs; a non-empty output directory is refused;
 - `Live_feed` against a scripted local websocket server: a malformed frame is counted in
   `stats` and skipped; a dropped connection is replaced on a synthetic clock (nothing
   before 0.4s, reconnected and resubscribed by 0.6s, `recv_ts` taken from that clock);
