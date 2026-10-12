@@ -7,7 +7,7 @@ module Stream = Market_data.Stream
 let stream_names (stream : Stream.t) symbols : Config.Route.t * Stream_name.t list =
   match stream with
   | Trades -> Market, List.map symbols ~f:(fun s -> Stream_name.Agg_trade s)
-  | Bbo -> Market, List.map symbols ~f:(fun s -> Stream_name.Book_ticker s)
+  | Bbo -> Public, List.map symbols ~f:(fun s -> Stream_name.Book_ticker s)
   | L2 ->
     ( Public
     , List.map symbols ~f:(fun symbol ->

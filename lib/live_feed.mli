@@ -4,7 +4,8 @@
     known to belong to one {!Market_data.Stream.t} before it is parsed:
 
     - [Trades]: [<symbol>@aggTrade] on the [Market] route;
-    - [Bbo]: [<symbol>@bookTicker] on the [Market] route;
+    - [Bbo]: [<symbol>@bookTicker] on the [Public] route (checked on mainnet: [/market]
+      sends nothing for it);
     - [L2]: [<symbol>@depth@100ms] on the [Public] route, with a local book per symbol
       synced from [GET /fapi/v1/depth?limit=1000]. Each sync (at start, after a sequence
       gap and after a reconnect) emits one [Snapshot] of the full book, followed by the
