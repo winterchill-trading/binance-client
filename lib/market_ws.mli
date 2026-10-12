@@ -30,7 +30,7 @@ val connect
   -> ?initial_backoff:Time_ns.Span.t
   -> ?max_backoff:Time_ns.Span.t
   -> ?on_reconnect:(unit -> unit)
-  -> Config.t
+  -> _ Config.gen
   -> t Or_error.t Deferred.t
 
 (** Every market event from every connection, in order. Frames that fail to decode are

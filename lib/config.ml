@@ -20,15 +20,24 @@ module Route = struct
   ;;
 end
 
-type t =
+module Keys = struct
+  type t =
+    { api_key : string
+    ; api_secret : (string option[@sexp.opaque])
+    ; recv_window : int option
+    }
+  [@@deriving sexp_of]
+end
+
+type 'keys gen =
   { base_url : Uri.t
   ; ws_url : Uri.t
   ; routed_ws : bool
-  ; api_key : string
-  ; api_secret : (string option[@sexp.opaque])
-  ; recv_window : int option
+  ; keys : 'keys
   }
 [@@deriving sexp_of]
+
+type t = Keys.t gen [@@deriving sexp_of]
 
 let ws_url_of_base_url base_url =
   let scheme =
@@ -43,7 +52,7 @@ let create ?ws_url ?(routed_ws = false) ?api_secret ?recv_window ~base_url ~api_
   let ws_url =
     Option.value_or_thunk ws_url ~default:(fun () -> ws_url_of_base_url base_url)
   in
-  { base_url; ws_url; routed_ws; api_key; api_secret; recv_window }
+  { base_url; ws_url; routed_ws; keys = { Keys.api_key; api_secret; recv_window } }
 ;;
 
 let local ?(port = 3300) ?api_secret ~api_key () =
@@ -74,6 +83,20 @@ let testnet ?recv_window ~api_key ~api_secret () =
     ~api_key
     ()
 ;;
+
+module Read_only = struct
+  type t = unit gen [@@deriving sexp_of]
+
+  let of_config (config : _ gen) = { config with keys = () }
+
+  let create ?ws_url ?routed_ws ~base_url () =
+    of_config (create ?ws_url ?routed_ws ~base_url ~api_key:"" ())
+  ;;
+
+  let local ?port () = of_config (local ?port ~api_key:"" ())
+  let mainnet () = of_config (mainnet ~api_key:"" ~api_secret:"" ())
+  let testnet () = of_config (testnet ~api_key:"" ~api_secret:"" ())
+end
 
 let join base path =
   let base_path = String.rstrip (Uri.path base) ~drop:(Char.equal '/') in

@@ -49,6 +49,7 @@ let encode_params
   params
   =
   let canonical query = if for_uri then uri_canonical query else query in
+  let keys = config.keys in
   match security with
   | Public | Api_key -> canonical (Query.encode params)
   | Signed ->
@@ -57,12 +58,12 @@ let encode_params
       Query.encode
         (params
          @ List.filter_opt
-             [ Option.map config.recv_window ~f:(fun w -> "recvWindow", Int.to_string w)
+             [ Option.map keys.recv_window ~f:(fun w -> "recvWindow", Int.to_string w)
              ; Some ("timestamp", Int.to_string (Timestamp_ms.to_int timestamp))
              ])
       |> canonical
     in
-    (match config.api_secret with
+    (match keys.api_secret with
      | None -> query
      | Some secret -> query ^ "&signature=" ^ Signature.sign ~secret ~query_string:query)
 ;;
@@ -70,7 +71,7 @@ let encode_params
 let headers (config : Config.t) (security : Security.t) =
   match security with
   | Public -> []
-  | Api_key | Signed -> [ "X-MBX-APIKEY", config.api_key ]
+  | Api_key | Signed -> [ "X-MBX-APIKEY", config.keys.api_key ]
 ;;
 
 let decode ((status, body) : Venue_net.Http.response) =
@@ -92,21 +93,21 @@ let decode ((status, body) : Venue_net.Http.response) =
        else Or_error.error_s [%message "HTTP error" (status : int) (body : string)])
 ;;
 
-let call ?(params = []) config security (meth : Cohttp.Code.meth) path =
+(* [encode ~for_uri ~now params] is the query string or body. *)
+let request ?(params = []) (config : _ Config.gen) ~headers ~encode meth path =
   let now = Time_ns.now () in
-  let headers = headers config security in
   let uri = Config.rest_uri config path in
   let response =
-    match meth with
+    match (meth : Cohttp.Code.meth) with
     | `POST | `PUT ->
       Venue_net.Http.request
         ~headers:(("Content-Type", "application/x-www-form-urlencoded") :: headers)
-        ~body:(encode_params config security ~now params)
+        ~body:(encode ~for_uri:false ~now params)
         meth
         uri
     | _ ->
       (* Built from the string so the query is sent exactly as encoded (and signed). *)
-      let encoded = encode_params ~for_uri:true config security ~now params in
+      let encoded = encode ~for_uri:true ~now params in
       let uri =
         if String.is_empty encoded
         then uri
@@ -120,11 +121,43 @@ let call ?(params = []) config security (meth : Cohttp.Code.meth) path =
     ~tag:[%message (Cohttp.Code.string_of_method meth) path]
 ;;
 
-let typed ?params config security meth path ~f =
-  let%map json = call ?params config security meth path in
+let call ?params config security meth path =
+  request
+    ?params
+    config
+    ~headers:(headers config security)
+    ~encode:(fun ~for_uri ~now params ->
+      encode_params ~for_uri config security ~now params)
+    meth
+    path
+;;
+
+let call_public ?params config meth path =
+  request
+    ?params
+    config
+    ~headers:[]
+    ~encode:(fun ~for_uri ~now:_ params ->
+      let query = Query.encode params in
+      if for_uri then uri_canonical query else query)
+    meth
+    path
+;;
+
+let decoded json path ~f =
   Or_error.bind json ~f:(fun json ->
     Or_error.try_with (fun () -> f json)
     |> Or_error.tag_s ~tag:[%message "cannot decode response" path])
+;;
+
+let typed ?params config security meth path ~f =
+  let%map json = call ?params config security meth path in
+  decoded json path ~f
+;;
+
+let typed_public ?params config meth path ~f =
+  let%map json = call_public ?params config meth path in
+  decoded json path ~f
 ;;
 
 let list_of f : Yojson.Safe.t -> _ = function
@@ -135,13 +168,12 @@ let list_of f : Yojson.Safe.t -> _ = function
 let symbol_param symbol = "symbol", Symbol.to_string symbol
 
 let exchange_info config =
-  typed config Public `GET "/fapi/v1/exchangeInfo" ~f:Exchange_info.t_of_yojson
+  typed_public config `GET "/fapi/v1/exchangeInfo" ~f:Exchange_info.t_of_yojson
 ;;
 
 let depth ?limit config symbol =
-  typed
+  typed_public
     config
-    Public
     `GET
     "/fapi/v1/depth"
     ~params:
@@ -151,9 +183,8 @@ let depth ?limit config symbol =
 ;;
 
 let book_ticker config symbol =
-  typed
+  typed_public
     config
-    Public
     `GET
     "/fapi/v1/ticker/bookTicker"
     ~params:[ symbol_param symbol ]
@@ -161,9 +192,8 @@ let book_ticker config symbol =
 ;;
 
 let premium_index config symbol =
-  typed
+  typed_public
     config
-    Public
     `GET
     "/fapi/v1/premiumIndex"
     ~params:[ symbol_param symbol ]

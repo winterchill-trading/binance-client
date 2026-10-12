@@ -16,18 +16,34 @@ module Route : sig
   val to_path : t -> string
 end
 
-type t =
+(** Credentials, needed by the user data stream and by [Api_key] and [Signed] REST
+    requests. *)
+module Keys : sig
+  type t =
+    { api_key : string (** sent as [X-MBX-APIKEY]; the simulator uses it as the account *)
+    ; api_secret : string option
+    (** HMAC-SHA256 key; without it signed requests carry no [signature] (enough for the
+        simulator) *)
+    ; recv_window : int option (** [recvWindow] in milliseconds on signed requests *)
+    }
+  [@@deriving sexp_of]
+end
+
+(** Endpoints plus ['keys]: {!Keys.t} for a trading config ({!t}), [unit] for a key-less
+    one ({!Read_only.t}). Functions that only touch public endpoints (market data REST,
+    market streams, {!Live_feed}) take any ['keys gen]; everything that needs a key takes
+    {!t}, so a read-only config cannot reach them. *)
+type 'keys gen =
   { base_url : Uri.t (** REST root, e.g. [https://fapi.binance.com] *)
   ; ws_url : Uri.t (** websocket root, e.g. [wss://fstream.binance.com] *)
   ; routed_ws : bool
   (** prefix websocket paths with [/public], [/market] or [/private] (see {!Route}) *)
-  ; api_key : string (** sent as [X-MBX-APIKEY]; the simulator uses it as the account *)
-  ; api_secret : string option
-  (** HMAC-SHA256 key; without it signed requests carry no [signature] (enough for the
-      simulator) *)
-  ; recv_window : int option (** [recvWindow] in milliseconds on signed requests *)
+  ; keys : 'keys
   }
 [@@deriving sexp_of]
+
+(** A config with credentials: every endpoint. *)
+type t = Keys.t gen [@@deriving sexp_of]
 
 (** [ws_url] defaults to [base_url] with scheme [ws]/[wss], [routed_ws] to [false]. *)
 val create
@@ -50,13 +66,26 @@ val mainnet : ?recv_window:int -> api_key:string -> api_secret:string -> unit ->
     (UNVERIFIED: whether the testnet serves the routed paths). *)
 val testnet : ?recv_window:int -> api_key:string -> api_secret:string -> unit -> t
 
+(** Configs without keys: public endpoints only. *)
+module Read_only : sig
+  type t = unit gen [@@deriving sexp_of]
+
+  (** Drops the keys. *)
+  val of_config : _ gen -> t
+
+  val create : ?ws_url:Uri.t -> ?routed_ws:bool -> base_url:Uri.t -> unit -> t
+  val local : ?port:int -> unit -> t
+  val mainnet : unit -> t
+  val testnet : unit -> t
+end
+
 (** [base_url] joined with [path], e.g. [rest_uri t "/fapi/v1/depth"]. *)
-val rest_uri : t -> string -> Uri.t
+val rest_uri : _ gen -> string -> Uri.t
 
 (** The combined-stream endpoint [<ws_url>[/<route>]/stream]. *)
-val combined_stream_uri : t -> route:Route.t -> Uri.t
+val combined_stream_uri : _ gen -> route:Route.t -> Uri.t
 
 (** The user data stream [<ws_url>[/private]/ws/<listenKey>]. *)
-val user_stream_uri : t -> listen_key:string -> Uri.t
+val user_stream_uri : _ gen -> listen_key:string -> Uri.t
 
 val ws_url_of_base_url : Uri.t -> Uri.t

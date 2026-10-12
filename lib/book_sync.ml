@@ -3,7 +3,7 @@ open Async
 open Binance_protocol
 
 type t =
-  { config : Config.t
+  { config : Config.Read_only.t
   ; book : Local_book.t
   ; levels : int
   ; snapshot_limit : int
@@ -23,7 +23,7 @@ let create
   symbol
   ~on_book
   =
-  { config
+  { config = Config.Read_only.of_config config
   ; book = Local_book.create symbol
   ; levels
   ; snapshot_limit

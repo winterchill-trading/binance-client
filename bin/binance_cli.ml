@@ -30,7 +30,9 @@ let config_param =
   let api_secret = env "BINANCE_API_SECRET" in
   let base : Config.t =
     (* Market data needs no secret, so a missing one is allowed everywhere. *)
-    let with_secret (config : Config.t) = { config with api_secret } in
+    let with_secret (config : Config.t) =
+      { config with keys = { config.keys with api_secret } }
+    in
     match network with
     | `Local -> Config.local ?api_secret ~api_key ()
     | `Mainnet -> with_secret (Config.mainnet ~api_key ~api_secret:"" ())

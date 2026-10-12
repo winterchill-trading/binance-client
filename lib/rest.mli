@@ -57,15 +57,26 @@ val call
   -> string
   -> Yojson.Safe.t Or_error.t Deferred.t
 
-(** {2 Market data} *)
+(** A [Public] (security [NONE]) request; it needs no keys, so any config will do. *)
+val call_public
+  :  ?params:Query.t
+  -> _ Config.gen
+  -> Cohttp.Code.meth
+  -> string
+  -> Yojson.Safe.t Or_error.t Deferred.t
 
-val exchange_info : Config.t -> Exchange_info.t Or_error.t Deferred.t
+(** {2 Market data}
+
+    Public endpoints: they accept a {!Config.Read_only.t} as well as a {!Config.t}. Every
+    other call needs a {!Config.t}. *)
+
+val exchange_info : _ Config.gen -> Exchange_info.t Or_error.t Deferred.t
 
 (** [limit]: 5, 10, 20, 50, 100, 500 (Binance's default) or 1000. *)
-val depth : ?limit:int -> Config.t -> Symbol.t -> Depth.t Or_error.t Deferred.t
+val depth : ?limit:int -> _ Config.gen -> Symbol.t -> Depth.t Or_error.t Deferred.t
 
-val book_ticker : Config.t -> Symbol.t -> Book_ticker.t Or_error.t Deferred.t
-val premium_index : Config.t -> Symbol.t -> Premium_index.t Or_error.t Deferred.t
+val book_ticker : _ Config.gen -> Symbol.t -> Book_ticker.t Or_error.t Deferred.t
+val premium_index : _ Config.gen -> Symbol.t -> Premium_index.t Or_error.t Deferred.t
 
 (** {2 Orders} *)
 

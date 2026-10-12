@@ -269,7 +269,7 @@ let connect config =
   let updates_r, updates_w = Pipe.create () in
   let t =
     { config
-    ; account_id = Neutral.Account.of_string config.api_key
+    ; account_id = Neutral.Account.of_string config.keys.api_key
     ; exchange_info
     ; market
     ; user

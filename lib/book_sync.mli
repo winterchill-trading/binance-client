@@ -18,7 +18,7 @@ val create
   -> ?snapshot_limit:int
   -> ?retry_delay:Time_ns.Span.t
   -> ?error_delay:Time_ns.Span.t
-  -> Config.t
+  -> _ Config.gen
   -> Symbol.t
   -> on_book:(Exchange_core.L2.t -> unit)
   -> t

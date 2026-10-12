@@ -20,7 +20,7 @@ let stream_names (stream : Stream.t) symbols : Config.Route.t * Stream_name.t li
 ;;
 
 type t =
-  { config : Config.t
+  { config : Config.Read_only.t
   ; time_source : Time_source.t
   ; normalizer : Feed_normalizer.t
   ; on_raw : stream:Stream.t -> recv_ts:Time_ns.t -> string -> unit
@@ -55,10 +55,9 @@ let error_delay = Time_ns.Span.of_int_sec 1
 
 let fetch_depth t symbol =
   match%map
-    Rest.call
+    Rest.call_public
       ~params:[ "symbol", Symbol.to_string symbol; "limit", Int.to_string snapshot_limit ]
       t.config
-      Public
       `GET
       "/fapi/v1/depth"
   with
@@ -200,7 +199,7 @@ let start
   let l2_r, l2 = Pipe.create () in
   let funding_r, funding = Pipe.create () in
   let t =
-    { config
+    { config = Config.Read_only.of_config config
     ; time_source
     ; normalizer =
         Feed_normalizer.create

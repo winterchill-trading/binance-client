@@ -38,7 +38,7 @@ open Async
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?time_source:Time_source.t
-  -> Config.t
+  -> _ Config.gen
   -> symbols:string list
   -> streams:Market_data.Stream.t list
   -> Market_data.Feed.t Deferred.t
@@ -50,7 +50,7 @@ type t
 val start
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
   -> ?time_source:Time_source.t
-  -> Config.t
+  -> _ Config.gen
   -> symbols:string list
   -> streams:Market_data.Stream.t list
   -> t Deferred.t
