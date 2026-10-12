@@ -6,3 +6,6 @@ module Config = Config
 
 (** REST endpoints: market data, orders, account, listen keys. *)
 module Rest = Rest
+
+(** A full book from a depth snapshot plus diff events, with Binance's sequencing rules. *)
+module Local_book = Local_book
