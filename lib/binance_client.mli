@@ -9,3 +9,6 @@ module Rest = Rest
 
 (** A full book from a depth snapshot plus diff events, with Binance's sequencing rules. *)
 module Local_book = Local_book
+
+(** Combined market streams with live subscriptions and resubscription on reconnect. *)
+module Market_ws = Market_ws
