@@ -18,11 +18,7 @@ let with_sim f =
     ~finally:(fun () -> Cohttp_async.Server.close http)
 ;;
 
-let first ?(timeout = Time_ns.Span.of_int_sec 5) reader =
-  match%map Clock_ns.with_timeout timeout (Pipe.read reader) with
-  | `Result (`Ok x) -> Some x
-  | `Result `Eof | `Timeout -> None
-;;
+let first reader = Pipe_read.next reader
 
 let%expect_test "trades, bbo, l2 and funding from the simulator" =
   with_sim (fun config ->

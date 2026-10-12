@@ -19,13 +19,7 @@ let with_sim f =
   Monitor.protect (fun () -> f config) ~finally:(fun () -> Cohttp_async.Server.close http)
 ;;
 
-(* The first item of [reader] satisfying [f], within [timeout]. *)
-let rec read_until ?(timeout = Time_ns.Span.of_int_sec 5) reader ~f =
-  match%bind Clock_ns.with_timeout timeout (Pipe.read reader) with
-  | `Timeout -> return None
-  | `Result `Eof -> return None
-  | `Result (`Ok x) -> if f x then return (Some x) else read_until ~timeout reader ~f
-;;
+let read_until ?timeout reader ~f = Pipe_read.until ?timeout reader ~f
 
 let limit ?(tif = Neutral.Tif.Gtc) side ~price ~size =
   Neutral.Order_request.limit ~tif btc side ~px:(px price) ~size:(sz size)
