@@ -36,6 +36,16 @@ open! Async
 open Binance_protocol
 include Mm_core.Venue.S with type config = Config.t
 
+(** The trade ids already delivered on [fills]. *)
+module Seen_trades : sig
+  type t
+
+  val create : unit -> t
+
+  (** [true] the first time [trade_id] is seen, then [false]. *)
+  val first_time : t -> Exchange_core.Trade_id.t -> bool
+end
+
 (** Pure conversions from Binance wire types, exposed for testing. *)
 module Convert : sig
   val ns_of_ms : Timestamp_ms.t -> int

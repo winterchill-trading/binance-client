@@ -194,6 +194,20 @@ module Convert = struct
   ;;
 end
 
+module Seen_trades = struct
+  type t = Neutral.Trade_id.Hash_set.t
+
+  let create () = Neutral.Trade_id.Hash_set.create ()
+
+  let first_time t trade_id =
+    if Hash_set.mem t trade_id
+    then false
+    else (
+      Hash_set.add t trade_id;
+      true)
+  ;;
+end
+
 type config = Config.t
 
 type book =
@@ -207,7 +221,7 @@ type t =
   ; exchange_info : Exchange_info.t
   ; market : Market_ws.t
   ; user : User_ws.t
-  ; seen_trades : Neutral.Trade_id.Hash_set.t
+  ; seen_trades : Seen_trades.t
   ; fills_r : Fill.t Pipe.Reader.t
   ; fills_w : Fill.t Pipe.Writer.t
   ; updates_r : Neutral_update.t Pipe.Reader.t
@@ -221,10 +235,8 @@ let on_user_event t (event : User_event.t) =
   match event with
   | Order_trade_update update ->
     Option.iter (Convert.fill update) ~f:(fun fill ->
-      if not (Hash_set.mem t.seen_trades fill.trade_id)
-      then (
-        Hash_set.add t.seen_trades fill.trade_id;
-        Pipe.write_without_pushback_if_open t.fills_w fill));
+      if Seen_trades.first_time t.seen_trades fill.trade_id
+      then Pipe.write_without_pushback_if_open t.fills_w fill);
     Option.iter (Convert.order_update update) ~f:(fun update ->
       Pipe.write_without_pushback_if_open t.updates_w update)
   | Account_update _ | Listen_key_expired _ | Unknown _ -> ()
@@ -261,7 +273,7 @@ let connect config =
     ; exchange_info
     ; market
     ; user
-    ; seen_trades = Neutral.Trade_id.Hash_set.create ()
+    ; seen_trades = Seen_trades.create ()
     ; fills_r
     ; fills_w
     ; updates_r
