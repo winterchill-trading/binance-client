@@ -21,6 +21,7 @@ let stream_names (stream : Stream.t) symbols : Config.Route.t * Stream_name.t li
 
 type t =
   { config : Config.t
+  ; time_source : Time_source.t
   ; normalizer : Feed_normalizer.t
   ; on_raw : stream:Stream.t -> recv_ts:Time_ns.t -> string -> unit
   ; fetching : Symbol.Hash_set.t
@@ -63,7 +64,7 @@ let fetch_depth t symbol =
   with
   | Error _ as error -> error
   | Ok json ->
-    let recv_ts = Time_ns.now () in
+    let recv_ts = Time_source.now t.time_source in
     t.on_raw ~stream:L2 ~recv_ts (Yojson.Safe.to_string json);
     Or_error.try_with (fun () -> recv_ts, Depth.t_of_yojson json)
 ;;
@@ -80,7 +81,7 @@ let rec sync_book t symbol =
       Log.Global.error_s
         [%message
           "binance feed: depth snapshot failed" (symbol : Symbol.t) (error : Error.t)];
-      let%bind () = Clock_ns.after error_delay in
+      let%bind () = Time_source.after t.time_source error_delay in
       sync_book t symbol
     | Ok (recv_ts, depth) ->
       (match Feed_normalizer.snapshot t.normalizer ~recv_ts symbol depth with
@@ -89,7 +90,7 @@ let rec sync_book t symbol =
          sync_book t symbol
        | `Ignored -> sync_book t symbol
        | `Gap ->
-         let%bind () = Clock_ns.after retry_delay in
+         let%bind () = Time_source.after t.time_source retry_delay in
          sync_book t symbol))
 ;;
 
@@ -101,7 +102,7 @@ let need_snapshot t symbol =
 ;;
 
 let on_frame t ~stream frame =
-  let recv_ts = Time_ns.now () in
+  let recv_ts = Time_source.now t.time_source in
   t.frames <- t.frames + 1;
   t.on_raw ~stream ~recv_ts frame;
   match Feed_normalizer.frame t.normalizer ~recv_ts frame with
@@ -143,6 +144,7 @@ let connect t ~stream symbols =
       ~ping:(`Frame (Time_ns.Span.of_int_sec 30))
       ~on_connect
       ~log_name:(sprintf "binance feed %s" (Stream.to_string stream))
+      ~time_source:t.time_source
       ~url:(Config.combined_stream_uri t.config ~route)
       ()
     >>| ok_exn
@@ -180,7 +182,13 @@ let stats t : Stats.t =
   }
 ;;
 
-let start ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ()) config ~symbols ~streams =
+let start
+  ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ())
+  ?(time_source = Time_source.wall_clock ())
+  config
+  ~symbols
+  ~streams
+  =
   let symbols =
     List.map symbols ~f:Symbol.of_string |> List.dedup_and_sort ~compare:Symbol.compare
   in
@@ -193,6 +201,7 @@ let start ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ()) config ~symbols ~streams 
   let funding_r, funding = Pipe.create () in
   let t =
     { config
+    ; time_source
     ; normalizer =
         Feed_normalizer.create
           ~l2_symbols:(if List.mem streams L2 ~equal:Stream.equal then symbols else [])
@@ -235,7 +244,7 @@ let feed t =
   end : Market_data.Feed.S)
 ;;
 
-let create ?on_raw config ~symbols ~streams =
-  let%map t = start ?on_raw config ~symbols ~streams in
+let create ?on_raw ?time_source config ~symbols ~streams =
+  let%map t = start ?on_raw ?time_source config ~symbols ~streams in
   feed t
 ;;

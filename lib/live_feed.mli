@@ -31,9 +31,13 @@ open Async
     also sees each depth snapshot body, re-serialized from the parsed JSON; it has a
     ["lastUpdateId"] field and no ["e"], which is how it differs from a diff event.
 
+    [time_source] (default the wall clock) stamps [recv_ts] and drives reconnection
+    backoff, keepalives and snapshot retries, so tests can step them.
+
     Raises if [streams] contains [Private] or a first connection fails. *)
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
@@ -45,6 +49,7 @@ type t
 (** Like {!create}, keeping the handle for {!stats}. *)
 val start
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
