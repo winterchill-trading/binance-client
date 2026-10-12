@@ -1,0 +1,27 @@
+; Compiling read_only_account.ml must fail with a type error; the compiler output is
+; compared against read_only_account.expected.
+
+(rule
+ (deps
+  read_only_account.ml
+  (glob_files ../../lib/.binance_client.objs/byte/*.cmi))
+ (action
+  (with-outputs-to
+   read_only_account.output
+   (with-accepted-exit-codes
+    2
+    (run
+     %{ocamlc}
+     -c
+     -color
+     never
+     -I
+     ../../lib/.binance_client.objs/byte
+     -o
+     read_only_account.cmo
+     read_only_account.ml)))))
+
+(rule
+ (alias runtest)
+ (action
+  (diff read_only_account.expected read_only_account.output)))

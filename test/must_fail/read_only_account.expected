@@ -1,0 +1,10 @@
+File "read_only_account.ml", line 3, characters 30-36:
+3 |   Binance_client.Rest.account config
+                                  ^^^^^^
+Error: This expression has type
+         "Binance_client.Config.Read_only.t" = "unit Binance_client.Config.gen"
+       but an expression was expected of type
+         "Binance_client__.Config.t" =
+           "Binance_client__.Config.Keys.t Binance_client.Config.gen"
+       Type "unit" is not compatible with type
+         "Binance_client__.Config.Keys.t" = "Binance_client.Config.Keys.t"
