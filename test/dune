@@ -5,9 +5,12 @@
   async
   uri
   yojson
+  cohttp-async
   binance-client
   binance-protocol
+  binance-sim
   exchange-core
+  exchange-core-engine
   mm-core)
  (inline_tests
   (flags
