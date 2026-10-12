@@ -12,3 +12,6 @@ module Local_book = Local_book
 
 (** Combined market streams with live subscriptions and resubscription on reconnect. *)
 module Market_ws = Market_ws
+
+(** Async driver of a [Local_book]: snapshots, resyncs and book reports. *)
+module Book_sync = Book_sync
