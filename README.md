@@ -331,8 +331,12 @@ commission rate endpoints.
   a gap and its resync, a too-old snapshot, the bounded buffer;
 - venue conversions (fills, order updates, placement statuses, reject reasons, order
   requests), trade-id de-duplication, market frame decoding;
+- `Feed_normalizer` on sample frames: trades, book tickers, mark prices (with and without
+  index), acknowledgements and error responses, diff depth buffered until a snapshot,
+  the snapshot with replayed events, deltas, a gap, other symbols, `reset`;
 - against `Binance_sim.Server` on a free port: every REST call, market and user streams
   with acknowledged subscriptions, and the `Venue` (post-only order rests, shows in
   `open_orders` and is cancelled, a crossing post-only order is rejected, an IOC fills and
-  the fill arrives once, `Account_view`, batch placement and `cancel_all`);
+  the fill arrives once, `Account_view`, batch placement and `cancel_all`), and
+  `Live_feed` delivering all four streams, raw frames and closing its pipes;
 - the mm-core live loop quoting for a few seconds on the simulator with noise traders.
