@@ -3,9 +3,9 @@
 open! Core
 
 (** Which of Binance's routed websocket paths a connection uses. Live USD-M serves
-    high-frequency public data (diff depth) on [/public], other market data ([@aggTrade],
-    [@markPrice], probably [@bookTicker]) on [/market] and user data on [/private]; an
-    unrouted [/ws] or [/stream] connection only gets public data. *)
+    high-frequency public data (diff depth, [@bookTicker]) on [/public], other market data
+    ([@aggTrade], [@markPrice]) on [/market] and user data on [/private]; an unrouted
+    [/ws] or [/stream] connection only gets public data. *)
 module Route : sig
   type t =
     | Public

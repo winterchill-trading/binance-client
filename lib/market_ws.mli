@@ -15,8 +15,8 @@ type t
 (** Opens the connection and returns once the first handshake succeeded or failed.
 
     - [route] (default [Public]) picks the routed path when [Config.routed_ws] is set:
-      diff depth is served on [Public], [@aggTrade], [@markPrice] and (probably)
-      [@bookTicker] on [Market].
+      diff depth and [@bookTicker] are served on [Public], [@aggTrade] and [@markPrice] on
+      [Market].
     - [ping] (default [`Frame 30s]): Binance pings the client every 3 minutes and
       venue-net answers; the client's own ping frames make the server answer with pongs,
       so a dead connection is detected after [max_silent_intervals] (default 2) quiet
