@@ -8,13 +8,21 @@ module Output = struct
   [@@deriving sexp_of]
 end
 
-type t = { books : Local_book.t Symbol.Table.t }
+type t =
+  { books : Local_book.t Symbol.Table.t
+  ; replay : bool
+  ; mutable last_l2_symbol : Symbol.t option
+  }
 
 let create ~l2_symbols =
   let books = Symbol.Table.create () in
   List.iter l2_symbols ~f:(fun symbol ->
     Hashtbl.set books ~key:symbol ~data:(Local_book.create symbol));
-  { books }
+  { books; replay = false; last_l2_symbol = None }
+;;
+
+let create_replay () =
+  { books = Symbol.Table.create (); replay = true; last_l2_symbol = None }
 ;;
 
 let instrument symbol = Market_data.Instrument.create Binance (Symbol.to_string symbol)
@@ -83,8 +91,17 @@ let snapshot_of_book ~recv_ts book : Market_data.L2_update.t option =
     })
 ;;
 
+let find_book t symbol =
+  if t.replay
+  then (
+    t.last_l2_symbol <- Some symbol;
+    Some
+      (Hashtbl.find_or_add t.books symbol ~default:(fun () -> Local_book.create symbol)))
+  else Hashtbl.find t.books symbol
+;;
+
 let depth_update t ~recv_ts (e : Depth_update.t) : Output.t list =
-  match Hashtbl.find t.books e.symbol with
+  match find_book t e.symbol with
   | None -> []
   | Some book ->
     (match Local_book.apply_update book e with
@@ -105,6 +122,31 @@ let decode frame =
       | _ -> `Event (Market_event.t_of_yojson json)))
 ;;
 
+let snapshot t ~recv_ts symbol depth =
+  match Hashtbl.find t.books symbol with
+  | None -> `Ignored
+  | Some book when Local_book.is_synced book -> `Ignored
+  | Some book ->
+    (match Local_book.apply_snapshot book depth with
+     | `Gap -> `Gap
+     | `Synced ->
+       (match snapshot_of_book ~recv_ts book with
+        | Some update -> `Synced update
+        | None -> `Gap))
+;;
+
+(* A recorded [GET /depth] body has no symbol: it was fetched for the symbol whose updates
+   came before it in the same recorded series. *)
+let recorded_snapshot t ~recv_ts depth : Output.t list =
+  match t.last_l2_symbol with
+  | None -> []
+  | Some symbol ->
+    (match snapshot t ~recv_ts symbol depth with
+     | `Synced update -> [ Event (L2 update) ]
+     | `Gap -> [ Need_snapshot symbol ]
+     | `Ignored -> [])
+;;
+
 let frame t ~recv_ts frame : Output.t list Or_error.t =
   match decode frame with
   | Error _ as error -> error
@@ -119,20 +161,8 @@ let frame t ~recv_ts frame : Output.t list Or_error.t =
        | Book_ticker e -> [ Event (Bbo (bbo ~recv_ts e)) ]
        | Mark_price_update e -> [ Event (Funding (funding ~recv_ts e)) ]
        | Depth_update e -> depth_update t ~recv_ts e
+       | Depth_snapshot depth when t.replay -> recorded_snapshot t ~recv_ts depth
        | Depth_snapshot _ | Unknown _ -> [])
-;;
-
-let snapshot t ~recv_ts symbol depth =
-  match Hashtbl.find t.books symbol with
-  | None -> `Ignored
-  | Some book when Local_book.is_synced book -> `Ignored
-  | Some book ->
-    (match Local_book.apply_snapshot book depth with
-     | `Gap -> `Gap
-     | `Synced ->
-       (match snapshot_of_book ~recv_ts book with
-        | Some update -> `Synced update
-        | None -> `Gap))
 ;;
 
 let is_synced t symbol =

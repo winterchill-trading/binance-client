@@ -28,11 +28,19 @@ type t
 (** Books are kept for [l2_symbols]. *)
 val create : l2_symbols:Symbol.t list -> t
 
+(** For recorded frames (market-recorder raw files): a book for every symbol whose depth
+    updates show up, and [GET /depth] bodies that {!Live_feed} records on the l2 stream
+    are passed to {!frame} like websocket frames. Such a body has no symbol and is applied
+    to the book of the symbol of the latest depth update; a body that does not join the
+    buffered updates gives [Need_snapshot] and the book waits for the next recorded one. *)
+val create_replay : unit -> t
+
 val instrument : Symbol.t -> Market_data.Instrument.t
 
 (** Decodes one websocket text frame (a combined-stream [{"stream", "data"}] object or a
     bare payload) received at [recv_ts]. Subscription acknowledgements give [[]];
-    undecodable frames and error responses give [Error]. *)
+    undecodable frames and error responses give [Error]. Depth snapshot bodies give [[]]
+    unless [t] is from {!create_replay}. *)
 val frame : t -> recv_ts:Time_ns.t -> string -> Output.t list Or_error.t
 
 (** Applies a depth snapshot to the book of [symbol] and replays the buffered events.
