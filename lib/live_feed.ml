@@ -25,6 +25,7 @@ type t =
   ; normalizer : Feed_normalizer.t
   ; on_raw : stream:Stream.t -> recv_ts:Time_ns.t -> string -> unit
   ; fetching : Symbol.Hash_set.t
+  ; synced : Symbol.Hash_set.t
   ; mutable next_id : int
   ; mutable closed : bool
   ; mutable clients : Ws_client.t list
@@ -34,11 +35,13 @@ type t =
   ; bbo : Market_data.Bbo.t Pipe.Writer.t
   ; l2 : Market_data.L2_update.t Pipe.Writer.t
   ; funding : Market_data.Funding.t Pipe.Writer.t
+  ; gaps : Market_data.Gap.t Pipe.Writer.t
   ; readers :
       Market_data.Trade.t Pipe.Reader.t
       * Market_data.Bbo.t Pipe.Reader.t
       * Market_data.L2_update.t Pipe.Reader.t
       * Market_data.Funding.t Pipe.Reader.t
+      * Market_data.Gap.t Pipe.Reader.t
   }
 
 let emit t (event : Market_data.Event.t) =
@@ -47,6 +50,19 @@ let emit t (event : Market_data.Event.t) =
   | Bbo x -> Pipe.write_without_pushback_if_open t.bbo x
   | L2 x -> Pipe.write_without_pushback_if_open t.l2 x
   | Funding x -> Pipe.write_without_pushback_if_open t.funding x
+;;
+
+let gap t ?instrument ~stream () =
+  if not t.closed
+  then
+    Pipe.write_without_pushback_if_open
+      t.gaps
+      { Market_data.Gap.recv_ts = Time_source.now t.time_source
+      ; venue = Binance
+      ; instrument
+      ; stream = Some stream
+      ; reason = Resync
+      }
 ;;
 
 let snapshot_limit = 1000
@@ -85,6 +101,7 @@ let rec sync_book t symbol =
     | Ok (recv_ts, depth) ->
       (match Feed_normalizer.snapshot t.normalizer ~recv_ts symbol depth with
        | `Synced update ->
+         Hash_set.add t.synced symbol;
          if not t.closed then emit t (L2 update);
          sync_book t symbol
        | `Ignored -> sync_book t symbol
@@ -97,6 +114,11 @@ let need_snapshot t symbol =
   if (not t.closed) && not (Hash_set.mem t.fetching symbol)
   then (
     Hash_set.add t.fetching symbol;
+    (* A book that was synced before lost its sequence; one that never was is starting. *)
+    if Hash_set.mem t.synced symbol
+    then (
+      Hash_set.remove t.synced symbol;
+      gap t ~instrument:(Feed_normalizer.instrument symbol) ~stream:L2 ());
     don't_wait_for (sync_book t symbol))
 ;;
 
@@ -134,8 +156,14 @@ let connect t ~stream symbols =
   let on_connect client =
     (* Diff events were lost while disconnected: rebuild the books from new snapshots,
        which the first buffered events ask for. *)
-    if Ws_client.reconnects client > 0 && Stream.equal stream L2
-    then Feed_normalizer.reset t.normalizer;
+    if Ws_client.reconnects client > 0
+    then (
+      gap t ~stream ();
+      if Stream.equal stream L2
+      then (
+        Feed_normalizer.reset t.normalizer;
+        (* The connection-wide gap covers every book. *)
+        Hash_set.clear t.synced));
     subscribe t client names
   in
   let%map client =
@@ -162,7 +190,8 @@ let close t =
     Pipe.close t.trades;
     Pipe.close t.bbo;
     Pipe.close t.l2;
-    Pipe.close t.funding)
+    Pipe.close t.funding;
+    Pipe.close t.gaps)
 ;;
 
 module Stats = struct
@@ -198,6 +227,7 @@ let start
   let bbo_r, bbo = Pipe.create () in
   let l2_r, l2 = Pipe.create () in
   let funding_r, funding = Pipe.create () in
+  let gaps_r, gaps = Pipe.create () in
   let t =
     { config = Config.Read_only.of_config config
     ; time_source
@@ -206,6 +236,7 @@ let start
           ~l2_symbols:(if List.mem streams L2 ~equal:Stream.equal then symbols else [])
     ; on_raw
     ; fetching = Symbol.Hash_set.create ()
+    ; synced = Symbol.Hash_set.create ()
     ; next_id = 1
     ; closed = false
     ; clients = []
@@ -215,7 +246,8 @@ let start
     ; bbo
     ; l2
     ; funding
-    ; readers = trades_r, bbo_r, l2_r, funding_r
+    ; gaps
+    ; readers = trades_r, bbo_r, l2_r, funding_r, gaps_r
     }
   in
   let%map () =
@@ -232,16 +264,19 @@ let start
   t
 ;;
 
-let feed t =
-  let trades_r, bbo_r, l2_r, funding_r = t.readers in
+let feed_with_gaps t =
+  let trades_r, bbo_r, l2_r, funding_r, gaps_r = t.readers in
   (module struct
     let trades = trades_r
     let bbo = bbo_r
     let l2 = l2_r
     let funding = funding_r
+    let gaps = gaps_r
     let close () = close t
-  end : Market_data.Feed.S)
+  end : Market_data.Feed.With_gaps.S)
 ;;
+
+let feed t = Market_data.Feed.With_gaps.to_feed (feed_with_gaps t)
 
 let create ?on_raw ?time_source config ~symbols ~streams =
   let%map t = start ?on_raw ?time_source config ~symbols ~streams in

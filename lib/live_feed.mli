@@ -57,6 +57,17 @@ val start
 
 val feed : t -> Market_data.Feed.t
 
+(** The same pipes plus [gaps]: one {!Market_data.Gap.t} with reason [Resync] per break,
+    stamped from [time_source]:
+
+    - every reconnect of a stream's connection: [stream = Some s], [instrument = None]
+      (frames sent while it was down are lost; an [L2] reconnect also drops every book);
+    - a diff-depth sequence break of a synced book: [stream = Some L2] and the symbol's
+      instrument. The first sync of a book at start is not a gap.
+
+    [gaps] is written without pushback and closes with the feed. *)
+val feed_with_gaps : t -> Market_data.Feed.With_gaps.t
+
 module Stats : sig
   type t =
     { frames : int (** websocket text frames received, acknowledgements included *)
