@@ -1,0 +1,15 @@
+(library
+ (name binance_client)
+ (public_name binance-client)
+ (libraries
+  core
+  async
+  cohttp
+  uri
+  yojson
+  venue-net
+  binance-protocol
+  exchange-core
+  mm-core)
+ (preprocess
+  (pps ppx_jane)))
