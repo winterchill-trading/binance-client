@@ -240,3 +240,84 @@ let%expect_test "venue: place, open orders, cancel, fills, books and account" =
       |}];
     Venue.close venue)
 ;;
+
+let%expect_test "market and user streams" =
+  with_sim (fun config ->
+    let alice = config ~api_key:"alice" in
+    let bob = config ~api_key:"bob" in
+    let%bind market = Market_ws.connect alice >>| ok_exn in
+    let%bind user = User_ws.connect alice >>| ok_exn in
+    let streams =
+      [ Stream_name.Book_ticker btc
+      ; Agg_trade btc
+      ; Diff_depth { symbol = btc; speed = Some Ms_100 }
+      ]
+    in
+    let%bind () = Market_ws.subscribe market streams >>| ok_exn in
+    (* Already active: nothing is sent. *)
+    let%bind () = Market_ws.subscribe market [ Book_ticker btc ] >>| ok_exn in
+    print_s [%sexp (Market_ws.subscriptions market : Stream_name.t list)];
+    let order client side tif =
+      Rest.new_order
+        client
+        (New_order.Request.limit
+           btc
+           side
+           ~time_in_force:tif
+           ~price:(px "100000")
+           ~quantity:(sz "0.01"))
+      >>| ok_exn
+      >>| ignore
+    in
+    let%bind () = order alice Sell Gtc in
+    let%bind () = order bob Buy Ioc in
+    let events = Market_ws.events market in
+    let kinds = String.Hash_set.create () in
+    let%bind (_ : _ option) =
+      read_until events ~f:(fun ({ data; _ } : Market_event.t Combined.t) ->
+        (match data with
+         | Book_ticker _ -> Hash_set.add kinds "bookTicker"
+         | Agg_trade trade ->
+           Hash_set.add kinds "aggTrade";
+           print_s
+             [%message
+               "trade"
+                 ~price:(trade.price : Price.t)
+                 ~taker:(Agg_trade.taker_side trade : Side.t)]
+         | Depth_update _ -> Hash_set.add kinds "depthUpdate"
+         | _ -> ());
+        Hash_set.length kinds = 3)
+    in
+    print_s
+      [%sexp (Hash_set.to_list kinds |> List.sort ~compare:String.compare : string list)];
+    let%bind () =
+      Market_ws.unsubscribe market [ Book_ticker btc; Agg_trade btc ] >>| ok_exn
+    in
+    print_s [%sexp (Market_ws.subscriptions market : Stream_name.t list)];
+    let%bind trade =
+      read_until (User_ws.events user) ~f:(function
+        | Order_trade_update { order; _ } ->
+          Execution_type.equal order.execution_type Trade
+        | _ -> false)
+    in
+    (match trade with
+     | Some (Order_trade_update { order; _ }) ->
+       print_s
+         [%message
+           ""
+             ~status:(order.status : Order_status.t)
+             ~filled:(order.cum_filled_qty : Size.t)
+             ~maker:(order.is_maker : bool)]
+     | _ -> print_endline "no trade");
+    [%expect
+      {|
+      ((Agg_trade BTCUSDT) (Book_ticker BTCUSDT)
+       (Diff_depth (symbol BTCUSDT) (speed (Ms_100))))
+      (trade (price 100000) (taker Buy))
+      (aggTrade bookTicker depthUpdate)
+      ((Diff_depth (symbol BTCUSDT) (speed (Ms_100))))
+      ((status Filled) (filled 0.01) (maker true))
+      |}];
+    let%bind () = Market_ws.close market in
+    User_ws.close ~close_key:true user)
+;;
