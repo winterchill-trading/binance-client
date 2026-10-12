@@ -19,6 +19,9 @@ module Book_sync = Book_sync
 (** Binance market frames to normalized [Market_data] records (pure). *)
 module Feed_normalizer = Feed_normalizer
 
+(** [Market_data.Feed.t] from the public market streams. *)
+module Live_feed = Live_feed
+
 (** The user data stream with listen-key keepalive and renewal. *)
 module User_ws = User_ws
 

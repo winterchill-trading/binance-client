@@ -4,5 +4,6 @@ module Local_book = Local_book
 module Market_ws = Market_ws
 module Book_sync = Book_sync
 module Feed_normalizer = Feed_normalizer
+module Live_feed = Live_feed
 module User_ws = User_ws
 module Venue = Venue
