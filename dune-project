@@ -36,5 +36,6 @@
   exchange-core
   mm-core
   fixed-decimal
+  (cohttp-async :with-test)
   (binance-sim :with-test)
   (exchange-core-engine :with-test)))
