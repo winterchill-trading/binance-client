@@ -16,10 +16,12 @@
       are [Cancelled] (Binance reports post-only and IOC expiries this way).
     - [place] sends [batchOrders] in groups of 5 (a single order goes to [POST /order]),
       with [newOrderRespType=RESULT]. A per-order [{"code", "msg"}] becomes [Rejected];
-      the reason comes from {!Binance_protocol.Api_error.to_reject_reason}, otherwise
-      [Unsupported msg]. An order that expired with nothing filled is [Rejected]: post
-      only ([GTX]) as [Post_only_would_cross], IOC as [No_liquidity], [EXPIRED_IN_MATCH]
-      as [Self_trade]. Market orders are sent as Binance [MARKET] orders.
+      the reason comes from {!Binance_protocol.Api_error.to_reject_reason}, plus [-4116]
+      (duplicate client id) and [-2010] by its wording (insufficient balance, self-trade),
+      otherwise [Unsupported "<code> <msg>"]. An order that expired with nothing filled is
+      [Rejected]: post only ([GTX]) as [Post_only_would_cross], IOC as [No_liquidity],
+      [EXPIRED_IN_MATCH] as [Self_trade]. Market orders are sent as Binance [MARKET]
+      orders.
     - [cancel] sends [DELETE /fapi/v1/order] per id, in parallel; unknown orders ([-2011],
       [-2013]) are not errors. [cancel_all] is [DELETE /fapi/v1/allOpenOrders].
     - [account] combines [GET /fapi/v2/account] and [GET /fapi/v2/positionRisk]; the

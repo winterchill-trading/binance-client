@@ -56,9 +56,15 @@ module Convert = struct
   ;;
 
   let reject_reason (e : Api_error.t) =
-    match Api_error.to_reject_reason e with
-    | Some reason -> reason
-    | None ->
+    let mentions pattern =
+      String.is_substring (String.lowercase e.msg) ~substring:pattern
+    in
+    match Api_error.to_reject_reason e, e.code with
+    | Some reason, _ -> reason
+    | None, Other -4116 -> Neutral.Reject_reason.Duplicate_client_order_id
+    | None, New_order_rejected when mentions "insufficient" -> Insufficient_margin
+    | None, New_order_rejected when mentions "same account" -> Self_trade
+    | None, _ ->
       Neutral.Reject_reason.Unsupported
         (sprintf "%d %s" (Api_error.Code.to_int e.code) e.msg)
   ;;
