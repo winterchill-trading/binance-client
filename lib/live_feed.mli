@@ -39,6 +39,31 @@ val create
   -> streams:Market_data.Stream.t list
   -> Market_data.Feed.t Deferred.t
 
+(** A running feed with its counters. *)
+type t
+
+(** Like {!create}, keeping the handle for {!stats}. *)
+val start
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> Config.t
+  -> symbols:string list
+  -> streams:Market_data.Stream.t list
+  -> t Deferred.t
+
+val feed : t -> Market_data.Feed.t
+
+module Stats : sig
+  type t =
+    { frames : int (** websocket text frames received, acknowledgements included *)
+    ; parse_errors : int
+    (** frames that did not decode, or were error responses, and were dropped *)
+    ; reconnects : int (** successful reconnections, summed over the connections *)
+    }
+  [@@deriving sexp_of]
+end
+
+val stats : t -> Stats.t
+
 (** The subscription of one stream kind for [symbols], and its route. *)
 val stream_names
   :  Market_data.Stream.t

@@ -27,10 +27,17 @@ type t =
   ; mutable next_id : int
   ; mutable closed : bool
   ; mutable clients : Ws_client.t list
+  ; mutable frames : int
+  ; mutable parse_errors : int
   ; trades : Market_data.Trade.t Pipe.Writer.t
   ; bbo : Market_data.Bbo.t Pipe.Writer.t
   ; l2 : Market_data.L2_update.t Pipe.Writer.t
   ; funding : Market_data.Funding.t Pipe.Writer.t
+  ; readers :
+      Market_data.Trade.t Pipe.Reader.t
+      * Market_data.Bbo.t Pipe.Reader.t
+      * Market_data.L2_update.t Pipe.Reader.t
+      * Market_data.Funding.t Pipe.Reader.t
   }
 
 let emit t (event : Market_data.Event.t) =
@@ -95,6 +102,7 @@ let need_snapshot t symbol =
 
 let on_frame t ~stream frame =
   let recv_ts = Time_ns.now () in
+  t.frames <- t.frames + 1;
   t.on_raw ~stream ~recv_ts frame;
   match Feed_normalizer.frame t.normalizer ~recv_ts frame with
   | Ok outputs ->
@@ -102,6 +110,7 @@ let on_frame t ~stream frame =
       | Event event -> emit t event
       | Need_snapshot symbol -> need_snapshot t symbol)
   | Error error ->
+    t.parse_errors <- t.parse_errors + 1;
     Log.Global.debug_s
       [%message
         "binance feed: undecodable frame"
@@ -155,7 +164,23 @@ let close t =
     Pipe.close t.funding)
 ;;
 
-let create ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ()) config ~symbols ~streams =
+module Stats = struct
+  type t =
+    { frames : int
+    ; parse_errors : int
+    ; reconnects : int
+    }
+  [@@deriving sexp_of]
+end
+
+let stats t : Stats.t =
+  { frames = t.frames
+  ; parse_errors = t.parse_errors
+  ; reconnects = List.sum (module Int) t.clients ~f:Ws_client.reconnects
+  }
+;;
+
+let start ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ()) config ~symbols ~streams =
   let symbols =
     List.map symbols ~f:Symbol.of_string |> List.dedup_and_sort ~compare:Symbol.compare
   in
@@ -176,10 +201,13 @@ let create ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ()) config ~symbols ~streams
     ; next_id = 1
     ; closed = false
     ; clients = []
+    ; frames = 0
+    ; parse_errors = 0
     ; trades
     ; bbo
     ; l2
     ; funding
+    ; readers = trades_r, bbo_r, l2_r, funding_r
     }
   in
   let%map () =
@@ -193,6 +221,11 @@ let create ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ()) config ~symbols ~streams
       don't_wait_for (close t);
       raise exn
   in
+  t
+;;
+
+let feed t =
+  let trades_r, bbo_r, l2_r, funding_r = t.readers in
   (module struct
     let trades = trades_r
     let bbo = bbo_r
@@ -200,4 +233,9 @@ let create ?(on_raw = fun ~stream:_ ~recv_ts:_ _ -> ()) config ~symbols ~streams
     let funding = funding_r
     let close () = close t
   end : Market_data.Feed.S)
+;;
+
+let create ?on_raw config ~symbols ~streams =
+  let%map t = start ?on_raw config ~symbols ~streams in
+  feed t
 ;;
