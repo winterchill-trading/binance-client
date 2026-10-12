@@ -1,0 +1,13 @@
+(executable
+ (name binance_cli)
+ (public_name binance-cli)
+ (package binance-client)
+ (libraries
+  core
+  async
+  core_unix.command_unix
+  binance-client
+  binance-protocol
+  uri)
+ (preprocess
+  (pps ppx_jane)))
