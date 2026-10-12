@@ -18,3 +18,6 @@ module Book_sync = Book_sync
 
 (** The user data stream with listen-key keepalive and renewal. *)
 module User_ws = User_ws
+
+(** [Mm_core.Venue.S] adapter: the market maker on Binance or the simulator. *)
+module Venue = Venue
