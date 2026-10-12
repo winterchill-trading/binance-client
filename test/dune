@@ -13,6 +13,8 @@
   exchange-core-engine
   mm-core)
  (inline_tests
+  (deps
+   (glob_files fixtures/*.jsonl))
   (flags
    (:standard -source-tree-root .)))
  (preprocess
