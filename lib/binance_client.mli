@@ -3,3 +3,6 @@
 
 (** Endpoints and credentials. *)
 module Config = Config
+
+(** REST endpoints: market data, orders, account, listen keys. *)
+module Rest = Rest
