@@ -15,3 +15,6 @@ module Market_ws = Market_ws
 
 (** Async driver of a [Local_book]: snapshots, resyncs and book reports. *)
 module Book_sync = Book_sync
+
+(** The user data stream with listen-key keepalive and renewal. *)
+module User_ws = User_ws
