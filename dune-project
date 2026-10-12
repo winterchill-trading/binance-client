@@ -35,6 +35,7 @@
   binance-protocol
   exchange-core
   mm-core
+  market-data
   fixed-decimal
   (cohttp-async :with-test)
   (binance-sim :with-test)

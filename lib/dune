@@ -11,6 +11,7 @@
   binance-protocol
   exchange-core
   mm-core
+  market-data
   fixed-decimal)
  (preprocess
   (pps ppx_jane)))
