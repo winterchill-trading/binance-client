@@ -15,7 +15,7 @@ market maker runs on Binance. It targets the local simulator
 
 ```sh
 opam switch create 5.2.0+ox --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
-for repo in fixed-decimal exchange-core order-book; do
+for repo in fixed-decimal exchange-core parquet market-data order-book; do
   opam pin add -n -y $repo https://github.com/winterchill-trading/$repo.git
 done
 opam pin add -n -y exchange-core-engine https://github.com/winterchill-trading/exchange-core.git
@@ -85,7 +85,8 @@ binance-cli feed -network mainnet -symbol BTCUSDT -streams trades,bbo,l2,funding
 ```
 
 In code: `Config.testnet ~api_key ~api_secret ()` or `Config.mainnet ...`, reading the
-keys from the environment yourself. Market data needs no key.
+keys from the environment yourself. Market data needs no key: use
+`Config.Read_only.mainnet ()`.
 
 ## API
 
@@ -96,19 +97,39 @@ Deferred.t`: transport failures, non-2xx statuses, undecodable bodies and Binanc
 ### `Config`
 
 ```ocaml
-type t =
-  { base_url : Uri.t; ws_url : Uri.t; routed_ws : bool
-  ; api_key : string; api_secret : string option; recv_window : int option }
+module Keys : sig
+  type t = { api_key : string; api_secret : string option; recv_window : int option }
+end
+
+type 'keys gen = { base_url : Uri.t; ws_url : Uri.t; routed_ws : bool; keys : 'keys }
+type t = Keys.t gen                    (* with credentials: every endpoint *)
 
 val create  : ?ws_url:Uri.t -> ?routed_ws:bool -> ?api_secret:string -> ?recv_window:int
   -> base_url:Uri.t -> api_key:string -> unit -> t
 val local   : ?port:int -> ?api_secret:string -> api_key:string -> unit -> t   (* :3300 *)
 val mainnet : ?recv_window:int -> api_key:string -> api_secret:string -> unit -> t
 val testnet : ?recv_window:int -> api_key:string -> api_secret:string -> unit -> t
-val rest_uri : t -> string -> Uri.t
-val combined_stream_uri : t -> route:Route.t -> Uri.t      (* <ws>[/public|/market]/stream *)
-val user_stream_uri : t -> listen_key:string -> Uri.t      (* <ws>[/private]/ws/<key> *)
+
+module Read_only : sig
+  type t = unit gen                    (* no keys: public endpoints only *)
+  val of_config : _ gen -> t
+  val create : ?ws_url:Uri.t -> ?routed_ws:bool -> base_url:Uri.t -> unit -> t
+  val local : ?port:int -> unit -> t
+  val mainnet : unit -> t
+  val testnet : unit -> t
+end
+
+val rest_uri : _ gen -> string -> Uri.t
+val combined_stream_uri : _ gen -> route:Route.t -> Uri.t  (* <ws>[/public|/market]/stream *)
+val user_stream_uri : _ gen -> listen_key:string -> Uri.t  (* <ws>[/private]/ws/<key> *)
 ```
+
+Access is in the type. Public endpoints (`Rest.exchange_info`, `depth`, `book_ticker`,
+`premium_index`, `call_public`, `Market_ws`, `Book_sync`, `Live_feed`) take any
+`_ Config.gen`; everything that sends a key (orders, account, listen keys, `User_ws`,
+`Venue`) takes `Config.t`. Passing a `Config.Read_only.t` to those is a compile error
+(`test/must_fail` pins the message), so a market-data process can run without
+credentials and cannot trade by accident.
 
 | Constructor | REST | Websocket | Routed |
 | --- | --- | --- | --- |
@@ -126,12 +147,14 @@ receives public data, and silently gets nothing for `@aggTrade` or `@markPrice`.
 ```ocaml
 val call : ?params:Query.t -> Config.t -> Security.t -> Cohttp.Code.meth -> string
   -> Yojson.Safe.t Or_error.t Deferred.t
+val call_public : ?params:Query.t -> _ Config.gen -> Cohttp.Code.meth -> string
+  -> Yojson.Safe.t Or_error.t Deferred.t
 val api_error : Error.t -> Api_error.t option
 
-val exchange_info : Config.t -> Exchange_info.t Or_error.t Deferred.t
-val depth         : ?limit:int -> Config.t -> Symbol.t -> Depth.t Or_error.t Deferred.t
-val book_ticker   : Config.t -> Symbol.t -> Book_ticker.t Or_error.t Deferred.t
-val premium_index : Config.t -> Symbol.t -> Premium_index.t Or_error.t Deferred.t
+val exchange_info : _ Config.gen -> Exchange_info.t Or_error.t Deferred.t
+val depth         : ?limit:int -> _ Config.gen -> Symbol.t -> Depth.t Or_error.t Deferred.t
+val book_ticker   : _ Config.gen -> Symbol.t -> Book_ticker.t Or_error.t Deferred.t
+val premium_index : _ Config.gen -> Symbol.t -> Premium_index.t Or_error.t Deferred.t
 val new_order     : Config.t -> New_order.Request.t -> Order.t Or_error.t Deferred.t
 val batch_orders  : Config.t -> Batch_orders.Request.t -> Batch_orders.Response.t Or_error.t Deferred.t
 val cancel_order  : Config.t -> Cancel_order.Request.t -> Order.t Or_error.t Deferred.t
@@ -161,7 +184,7 @@ val create_listen_key / keepalive_listen_key / close_listen_key
 ```ocaml
 val connect : ?route:Config.Route.t -> ?ping:Venue_net.Ws_client.Ping.t
   -> ?max_silent_intervals:int -> ?initial_backoff:Time_ns.Span.t
-  -> ?max_backoff:Time_ns.Span.t -> ?on_reconnect:(unit -> unit) -> Config.t
+  -> ?max_backoff:Time_ns.Span.t -> ?on_reconnect:(unit -> unit) -> _ Config.gen
   -> t Or_error.t Deferred.t
 val events : t -> Market_event.t Combined.t Pipe.Reader.t
 val subscribe   : ?timeout:Time_ns.Span.t -> t -> Stream_name.t list -> unit Or_error.t Deferred.t
@@ -214,8 +237,14 @@ lost).
 ```ocaml
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
-  -> Config.t -> symbols:string list -> streams:Market_data.Stream.t list
+  -> ?time_source:Time_source.t
+  -> _ Config.gen -> symbols:string list -> streams:Market_data.Stream.t list
   -> Market_data.Feed.t Deferred.t
+
+type t
+val start : (* same arguments as [create] *) -> t Deferred.t
+val feed  : t -> Market_data.Feed.t
+val stats : t -> Stats.t   (* { frames; parse_errors; reconnects } *)
 ```
 
 A [market-data](https://github.com/winterchill-trading/market-data) `Feed.t` from the
@@ -237,6 +266,10 @@ public streams (no API key), one combined-stream connection per requested stream
   fresh `Snapshot` after the next sync.
 - Reconnects (backoff, resubscription) come from `Venue_net.Ws_client`; undecodable frames
   are logged at debug level and skipped. `close` closes the sockets and all four pipes.
+- `stats` counts text frames received, frames dropped because they did not decode (or
+  were error responses) and successful reconnections over all connections.
+- `time_source` (default the wall clock) stamps `recv_ts` and drives reconnection backoff,
+  keepalives and snapshot retries, so tests can run them on a synthetic clock.
 - The conversions are pure and tested on their own in `Feed_normalizer`.
 
 ### `Venue`: the market maker on Binance
@@ -334,9 +367,59 @@ commission rate endpoints.
 - `Feed_normalizer` on sample frames: trades, book tickers, mark prices (with and without
   index), acknowledgements and error responses, diff depth buffered until a snapshot,
   the snapshot with replayed events, deltas, a gap, other symbols, `reset`;
+- `Feed_normalizer` on recorded mainnet frames (`test/fixtures`, see below): every frame
+  decodes, with per-stream counts, and the minor words allocated per message;
+- `Live_feed` against a scripted local websocket server: a malformed frame is counted in
+  `stats` and skipped; a dropped connection is replaced on a synthetic clock (nothing
+  before 0.4s, reconnected and resubscribed by 0.6s, `recv_ts` taken from that clock);
 - against `Binance_sim.Server` on a free port: every REST call, market and user streams
   with acknowledged subscriptions, and the `Venue` (post-only order rests, shows in
   `open_orders` and is cancelled, a crossing post-only order is rejected, an IOC fills and
   the fill arrives once, `Account_view`, batch placement and `cancel_all`), and
   `Live_feed` delivering all four streams, raw frames and closing its pipes;
+- a `Config.Read_only.t` on every public endpoint of the simulator; `test/must_fail`
+  compiles a call of `Rest.account` with one and pins the type error;
 - the mm-core live loop quoting for a few seconds on the simulator with noise traders.
+
+Pipes in tests are read with `Pipe_read` (wait on `values_available`, then `read_now`):
+`Clock_ns.with_timeout` around `Pipe.read` leaves the read pending after a timeout and it
+swallows the next value, which `test_pipe_read.ml` demonstrates.
+
+### Fixtures
+
+`test/fixtures/*.jsonl` hold BTCUSDT frames recorded from the public mainnet streams (no
+key) on 2026-10-12, one websocket text frame per line, as `on_raw` sees them, each file
+starting with the subscription acknowledgement:
+
+| File | Stream | Frames |
+| --- | --- | --- |
+| `trades.jsonl` | `btcusdt@aggTrade` (`/market`) | first 150 of the minute |
+| `bbo.jsonl` | `btcusdt@bookTicker` (`/public`) | first 200 |
+| `l2.jsonl` | `btcusdt@depth@100ms` (`/public`) | 5 diffs, the `GET /depth?limit=1000` snapshot (cut to 100 levels a side), 40 diffs |
+| `funding.jsonl` | `btcusdt@markPrice@1s` (`/market`) | the whole minute (59) |
+
+Normalized: 150 trades, 200 BBOs, 59 funding records, and for L2 one snapshot and 40
+deltas (the 5 earlier diffs ask for a snapshot, none is a gap).
+
+## Performance
+
+`bench/main.exe` (core_bench) runs `Feed_normalizer.frame` over the recorded frames:
+
+```sh
+dune exec ./bench/main.exe -- -quota 2 -ascii
+```
+
+On an Apple M-series laptop:
+
+| Benchmark | Time | Minor words |
+| --- | --- | --- |
+| `trades` (per frame, ~200 bytes) | 2.5 us | 482 |
+| `bbo` (per frame) | 2.6 us | 475 |
+| `funding` (per frame) | 2.6 us | 478 |
+| `l2 replay` (46 frames, ~4.6 KB each, with the snapshot) | 4.7 ms | 1.28 M |
+
+About 2.4 words per input byte for the small frames and 6 per byte for depth diffs,
+almost all of it `Yojson.Safe` trees and decimal parsing. The expect test in
+`test_allocation.ml` pins the same counts per Live_feed message: 478 words (trades), 472
+(BBO), 474 (funding) and 27,087 on average for depth diffs, up to 150,200 for the
+largest.
