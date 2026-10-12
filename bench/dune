@@ -1,0 +1,31 @@
+(executable
+ (name main)
+ (libraries
+  core
+  core_unix.command_unix
+  core_bench
+  yojson
+  binance-protocol
+  binance-client)
+ (preprocess
+  (pps ppx_jane)))
+
+; The recorded frames from test/fixtures, embedded as strings.
+
+(rule
+ (target frames.ml)
+ (deps
+  (glob_files ../test/fixtures/*.jsonl))
+ (action
+  (with-stdout-to
+   frames.ml
+   (progn
+    (echo "let trades = {json|")
+    (cat ../test/fixtures/trades.jsonl)
+    (echo "|json}\nlet bbo = {json|")
+    (cat ../test/fixtures/bbo.jsonl)
+    (echo "|json}\nlet l2 = {json|")
+    (cat ../test/fixtures/l2.jsonl)
+    (echo "|json}\nlet funding = {json|")
+    (cat ../test/fixtures/funding.jsonl)
+    (echo "|json}\n")))))

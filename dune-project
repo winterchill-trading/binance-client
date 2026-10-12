@@ -37,6 +37,7 @@
   mm-core
   market-data
   fixed-decimal
+  (core_bench :with-test)
   (cohttp-async :with-test)
   (binance-sim :with-test)
   (exchange-core-engine :with-test)))
