@@ -1,3 +1,289 @@
 # binance-client
 
 Async client for the Binance USD-M Futures API
+
+Built with [OxCaml](https://oxcaml.org) and the Jane Street library stack (Core, Async),
+on top of the wire types and signing in
+[binance-protocol](https://github.com/winterchill-trading/binance-protocol) and the
+venue-independent transport in [venue-net](https://github.com/winterchill-trading/venue-net).
+The Binance counterpart of [hl-client](https://github.com/winterchill-trading/hl-client),
+plus an [mm-core](https://github.com/winterchill-trading/mm-core) venue adapter so the
+market maker runs on Binance. It targets the local simulator
+([binance-sim](https://github.com/winterchill-trading/binance-sim)) and the real API.
+
+## Build
+
+```sh
+opam switch create 5.2.0+ox --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
+for repo in fixed-decimal exchange-core order-book; do
+  opam pin add -n -y $repo https://github.com/winterchill-trading/$repo.git
+done
+opam pin add -n -y exchange-core-engine https://github.com/winterchill-trading/exchange-core.git
+for repo in venue-net binance-protocol mm-core binance-sim; do
+  opam pin add -n -y $repo https://github.com/winterchill-trading/$repo.git
+done
+opam install . --deps-only --with-test
+dune build && dune test
+```
+
+`binance-sim` and `exchange-core-engine` are test dependencies only. Inside a dune
+workspace that also contains the sibling repositories, dune uses their sources and the
+pins are not needed. `https://` and `wss://` need `async_ssl` built against OpenSSL 3; on
+macOS with Homebrew's `openssl@4`, see
+[hl-client's notes](https://github.com/winterchill-trading/hl-client#macos-and-openssl).
+
+## Quick start
+
+```ocaml
+open! Core
+open Async
+open Binance_protocol
+open Binance_client
+
+let main () =
+  let config = Config.local ~api_key:"alice" () in          (* http://localhost:3300 *)
+  let btc = Symbol.of_string "BTCUSDT" in
+  let%bind depth = Rest.depth ~limit:5 config btc >>| ok_exn in
+  print_s [%sexp (depth : Depth.t)];
+  let%bind order =
+    Rest.new_order config
+      (New_order.Request.limit btc Buy ~time_in_force:Gtx
+         ~price:(Price.of_string "99000") ~quantity:(Size.of_string "0.01"))
+  in
+  print_s [%sexp (order : Order.t Or_error.t)];
+  let%bind market = Market_ws.connect config >>| ok_exn in
+  let%bind () = Market_ws.subscribe market [ Book_ticker btc ] >>| ok_exn in
+  Pipe.iter_without_pushback (Market_ws.events market) ~f:(fun event ->
+    print_s [%sexp (event : Market_event.t Combined.t)])
+```
+
+## Running against the simulator and Binance
+
+```sh
+# the simulator, in another terminal
+dune exec binance-sim -- -port 3300
+
+binance-cli depth BTCUSDT -limit 5
+binance-cli book-ticker BTCUSDT
+binance-cli watch -book BTCUSDT -agg-trade BTCUSDT -user      # local book, trades, user stream
+```
+
+The simulator takes the `X-MBX-APIKEY` header as the account (any value; new keys are
+credited 1,000,000 USDT) and does not check signatures, so `Config.local ~api_key ()`
+needs no secret. `binance-cli` uses `BINANCE_API_KEY` (default `binance-cli`) and, when set,
+`BINANCE_API_SECRET`.
+
+Against Binance, create API keys for the futures testnet (or mainnet) and export them:
+
+```sh
+export BINANCE_API_KEY=... BINANCE_API_SECRET=...
+binance-cli book-ticker BTCUSDT -network testnet
+binance-cli watch -network testnet -book BTCUSDT -user
+binance-cli watch -network mainnet -route market -agg-trade BTCUSDT -mark-price BTCUSDT
+```
+
+In code: `Config.testnet ~api_key ~api_secret ()` or `Config.mainnet ...`, reading the
+keys from the environment yourself. Market data needs no key.
+
+## API
+
+All modules live under `Binance_client`. Every network call returns `_ Or_error.t
+Deferred.t`: transport failures, non-2xx statuses, undecodable bodies and Binance
+`{"code", "msg"}` errors are `Error`.
+
+### `Config`
+
+```ocaml
+type t =
+  { base_url : Uri.t; ws_url : Uri.t; routed_ws : bool
+  ; api_key : string; api_secret : string option; recv_window : int option }
+
+val create  : ?ws_url:Uri.t -> ?routed_ws:bool -> ?api_secret:string -> ?recv_window:int
+  -> base_url:Uri.t -> api_key:string -> unit -> t
+val local   : ?port:int -> ?api_secret:string -> api_key:string -> unit -> t   (* :3300 *)
+val mainnet : ?recv_window:int -> api_key:string -> api_secret:string -> unit -> t
+val testnet : ?recv_window:int -> api_key:string -> api_secret:string -> unit -> t
+val rest_uri : t -> string -> Uri.t
+val combined_stream_uri : t -> route:Route.t -> Uri.t      (* <ws>[/public|/market]/stream *)
+val user_stream_uri : t -> listen_key:string -> Uri.t      (* <ws>[/private]/ws/<key> *)
+```
+
+| Constructor | REST | Websocket | Routed |
+| --- | --- | --- | --- |
+| `local` | `http://localhost:3300` | `ws://localhost:3300` | no |
+| `mainnet` | `https://fapi.binance.com` | `wss://fstream.binance.com` | yes |
+| `testnet` | `https://demo-fapi.binance.com` | `wss://demo-fstream.binance.com` | no |
+
+Live USD-M routes websocket traffic by path: diff depth on `/public`, other market data
+on `/market`, user data on `/private`; an unrouted `/ws` or `/stream` connection only
+receives public data, and silently gets nothing for `@aggTrade` or `@markPrice`.
+`routed_ws` adds the prefixes.
+
+### `Rest`
+
+```ocaml
+val call : ?params:Query.t -> Config.t -> Security.t -> Cohttp.Code.meth -> string
+  -> Yojson.Safe.t Or_error.t Deferred.t
+val api_error : Error.t -> Api_error.t option
+
+val exchange_info : Config.t -> Exchange_info.t Or_error.t Deferred.t
+val depth         : ?limit:int -> Config.t -> Symbol.t -> Depth.t Or_error.t Deferred.t
+val book_ticker   : Config.t -> Symbol.t -> Book_ticker.t Or_error.t Deferred.t
+val premium_index : Config.t -> Symbol.t -> Premium_index.t Or_error.t Deferred.t
+val new_order     : Config.t -> New_order.Request.t -> Order.t Or_error.t Deferred.t
+val batch_orders  : Config.t -> Batch_orders.Request.t -> Batch_orders.Response.t Or_error.t Deferred.t
+val cancel_order  : Config.t -> Cancel_order.Request.t -> Order.t Or_error.t Deferred.t
+val cancel_all    : Config.t -> Symbol.t -> unit Or_error.t Deferred.t
+val open_orders   : ?symbol:Symbol.t -> Config.t -> Open_order.t list Or_error.t Deferred.t
+val user_trades   : ?order_id:Order_id.t -> ?from_id:Trade_id.t -> ?limit:int -> Config.t
+  -> Symbol.t -> User_trade.t list Or_error.t Deferred.t
+val account       : Config.t -> Account.t Or_error.t Deferred.t            (* /fapi/v2 *)
+val position_risk : ?symbol:Symbol.t -> Config.t -> Position_risk.t list Or_error.t Deferred.t
+val create_listen_key / keepalive_listen_key / close_listen_key
+```
+
+- Parameters are encoded in insertion order: in the query string for `GET` and `DELETE`,
+  as an `application/x-www-form-urlencoded` body for `POST` and `PUT`.
+- `Signed` requests (`TRADE`, `USER_DATA`) append `recvWindow` (when configured),
+  `timestamp` (the local clock) and, when the config has a secret, the HMAC-SHA256
+  `signature` of everything before it. `Api_key` and `Signed` requests carry
+  `X-MBX-APIKEY`.
+- `Uri` re-encodes query strings (`%3A` becomes `:`), so `GET`/`DELETE` queries are
+  signed in the form `Uri` actually sends (`encode_params ~for_uri:true`).
+- A body `{"code": c, "msg": m}` with `c <> 200` is an `Error` from which `api_error`
+  recovers the `Api_error.t`, even under added tags. `DELETE /allOpenOrders` answers
+  success as `{"code": 200, ...}`.
+
+### `Market_ws`
+
+```ocaml
+val connect : ?route:Config.Route.t -> ?ping:Venue_net.Ws_client.Ping.t
+  -> ?max_silent_intervals:int -> ?initial_backoff:Time_ns.Span.t
+  -> ?max_backoff:Time_ns.Span.t -> ?on_reconnect:(unit -> unit) -> Config.t
+  -> t Or_error.t Deferred.t
+val events : t -> Market_event.t Combined.t Pipe.Reader.t
+val subscribe   : ?timeout:Time_ns.Span.t -> t -> Stream_name.t list -> unit Or_error.t Deferred.t
+val unsubscribe : ?timeout:Time_ns.Span.t -> t -> Stream_name.t list -> unit Or_error.t Deferred.t
+val subscriptions : t -> Stream_name.t list
+val close : t -> unit Deferred.t
+```
+
+- One combined-stream connection; streams are added with live `SUBSCRIBE` requests and
+  `subscribe` waits for the `{"result": null, "id": n}` acknowledgement (while
+  disconnected it returns at once). Active streams are resubscribed after every
+  reconnect, then `on_reconnect` runs.
+- Keepalive: the server pings every 3 minutes and venue-net answers. By default the
+  client also sends a ping frame every 30s, so a dead socket is replaced after two
+  silent intervals; pass `` `None `` to rely on the server alone.
+- `events` is buffered without pushback; keep reading.
+
+### `Local_book` and `Book_sync`
+
+`Local_book` is a pure full book per symbol fed by a `GET /depth` snapshot and diff
+events, with Binance's rules: buffer until a snapshot, drop `u < lastUpdateId`, start at
+the event with `U <= lastUpdateId <= u` (or `pu = lastUpdateId`, which the simulator sends
+after an idle snapshot), then require `pu` = previous `u`. A break drops the book and
+buffers again (`Gap`); `l2 ?depth` gives an `Exchange_core.L2.t` (order counts `n = 0`,
+Binance has none).
+
+`Book_sync` drives it: it fetches snapshots (one at a time, retrying when a snapshot is
+older than the buffered events), applies `<symbol>@depth@100ms` events, calls `on_book`
+after every change, and resyncs after `reset` (call it on reconnect).
+
+### `User_ws`
+
+```ocaml
+val connect : ?keepalive_interval:Time_ns.Span.t -> ?ping:Venue_net.Ws_client.Ping.t
+  -> ?max_silent_intervals:int -> ?initial_backoff:Time_ns.Span.t
+  -> ?max_backoff:Time_ns.Span.t -> ?on_reconnect:(unit -> unit) -> Config.t
+  -> t Or_error.t Deferred.t
+val events : t -> User_event.t Pipe.Reader.t
+val renew : t -> unit Or_error.t Deferred.t
+val close : ?close_key:bool -> t -> unit Deferred.t
+```
+
+Creates a listen key, connects to `<ws>[/private]/ws/<listenKey>`, keeps the key alive
+every 30 minutes, and on `-1125` from the keepalive or a `listenKeyExpired` event creates a
+new key and replaces the socket (then calls `on_reconnect`, since events may have been
+lost).
+
+### `Venue`: the market maker on Binance
+
+`Venue` implements `Mm_core.Venue.S` with `config = Config.t`, so
+`Mm_core.Live.Make (Binance_client.Venue)` runs the strategy on Binance or the simulator.
+
+| Venue call | Binance |
+| --- | --- |
+| `connect` | `exchangeInfo`, user data stream, one public combined-stream connection |
+| `instrument` | `exchangeInfo` filters (`PRICE_FILTER` tick, `LOT_SIZE` step); `max_leverage` = the account's current leverage from `positionRisk` (default 20); fees = base tier, taker 5 bps, maker 2 bps |
+| `books` | a local book per symbol (`GET /depth` + `@depth@100ms`), top 50 levels, after every applied diff; resynced after reconnects and gaps |
+| `fills` | `ORDER_TRADE_UPDATE` with `x = TRADE` (or `CALCULATED`), once per trade id; fee = `n` taken as USD, `closed_pnl = rp` |
+| `order_updates` | `ORDER_TRADE_UPDATE` status: `NEW`, `PARTIALLY_FILLED`, `FILLED`; `CANCELED`/`EXPIRED`/`EXPIRED_IN_MATCH` are `Cancelled` |
+| `open_orders` | `GET /fapi/v1/openOrders?symbol=` |
+| `account` | `GET /fapi/v2/account` + `GET /fapi/v2/positionRisk`; account id = API key |
+| `place` | `POST /batchOrders` per 5 orders, `POST /order` for a single one, `newOrderRespType=RESULT` |
+| `cancel` | `DELETE /order` per id in parallel; `-2011`/`-2013` (already gone) are not errors |
+| `cancel_all` | `DELETE /allOpenOrders` |
+
+Design choices:
+
+- Books come from a full local book rather than `@depth20` partial snapshots: the partial
+  depth payload shape is unverified for USD-M (see below) and partial snapshots cannot
+  reveal lost updates, while the diff stream's `pu` chain does.
+- Placement statuses: `NEW` (and a resting `PARTIALLY_FILLED`) is `Resting`; `FILLED`, or
+  an IOC/expired order with a fill, is `Filled`; an order that expired unfilled is
+  `Rejected` (`GTX` as `Post_only_would_cross`, IOC as `No_liquidity`, `EXPIRED_IN_MATCH`
+  as `Self_trade`). Per-order `{code, msg}` errors map through
+  `Api_error.to_reject_reason`, plus `-4116` (duplicate client id) and `-2010` by its
+  wording; anything else is `Unsupported "<code> <msg>"`. A whole-request error (e.g.
+  `-1102`) is an `Error`.
+- Client order ids Binance would reject (more than 36 characters, or outside
+  `[A-Za-z0-9.:/_-]`) are rejected locally as `Unsupported`.
+- Binance's user stream does not replay history, so de-duplication by trade id
+  (`Venue.Seen_trades`) only guards against repeated events; no time filter is applied,
+  which avoids dropping fills on clock skew.
+- `on_reconnect` hooks run after a reconnect of either stream and after a listen-key
+  renewal.
+
+## CLI
+
+`binance-cli` (`bin/binance_cli.ml`) is a smoke-testing tool: `depth`, `book-ticker` and
+`watch` (`-depth`, `-book` (local book, top 5), `-book-ticker`, `-agg-trade`,
+`-mark-price`, `-user`), with `-network local|mainnet|testnet`, `-base-url`, `-ws-url`,
+`-routed`, `-route public|market` and `-debug`.
+
+## Unverified
+
+Inherited from binance-protocol (see its
+[spec](https://github.com/winterchill-trading/binance-protocol/blob/main/docs/binance-usdm-spec.md)),
+and only checked against the simulator, which implements the same assumptions:
+
+- Market stream payloads (`depthUpdate`, `aggTrade`, `bookTicker`, `markPriceUpdate`) and
+  the partial-depth shape.
+- `ACCOUNT_UPDATE` position fields; `ORDER_TRADE_UPDATE` `er`.
+- `exchangeInfo` filters other than `PRICE_FILTER` (`LOT_SIZE` is what the venue uses for
+  the size step).
+- `batchOrders` sent as a JSON array string with string values.
+- Routing: whether `@bookTicker` is on `/market`, whether the testnet serves routed paths,
+  and the legacy `/ws/<listenKey>` user stream path used when unrouted.
+- The testnet hosts (`demo-fapi`, `demo-fstream`).
+
+Not implemented: RSA/Ed25519 keys, server time synchronisation (`timestamp` is the local
+clock; set `recv_window` if it drifts), rate-limit tracking, the leverage brackets and
+commission rate endpoints.
+
+## Tests
+
+`dune test` runs without network access:
+
+- request encoding and signing (the documented HMAC example, `Uri` normalisation),
+  headers, error decoding, endpoint URLs;
+- `Local_book` sequencing with crafted events: buffering, the start rule, stale events,
+  a gap and its resync, a too-old snapshot, the bounded buffer;
+- venue conversions (fills, order updates, placement statuses, reject reasons, order
+  requests), trade-id de-duplication, market frame decoding;
+- against `Binance_sim.Server` on a free port: every REST call, market and user streams
+  with acknowledged subscriptions, and the `Venue` (post-only order rests, shows in
+  `open_orders` and is cancelled, a crossing post-only order is rejected, an IOC fills and
+  the fill arrives once, `Account_view`, batch placement and `cancel_all`);
+- the mm-core live loop quoting for a few seconds on the simulator with noise traders.
