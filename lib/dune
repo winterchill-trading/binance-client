@@ -10,6 +10,7 @@
   venue-net
   binance-protocol
   exchange-core
-  mm-core)
+  mm-core
+  fixed-decimal)
  (preprocess
   (pps ppx_jane)))
