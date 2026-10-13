@@ -7,6 +7,7 @@
   yojson
   cohttp-async
   binance-client
+  binance_client_blast
   binance-protocol
   binance-sim
   exchange-core
