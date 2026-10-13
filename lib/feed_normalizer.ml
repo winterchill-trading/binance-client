@@ -45,7 +45,6 @@ let create ~l2_symbols =
 ;;
 
 let create_replay () = make ~replay:true (Symbol.Table.create ())
-
 let instrument symbol = Market_data.Instrument.create Binance (Symbol.to_string symbol)
 let ts = Timestamp_ms.to_time_ns
 
@@ -191,7 +190,8 @@ let frame_reference t ~recv_ts frame : Output.t list Or_error.t =
 
 let max_cached_symbols = 256
 
-let rec find_symbol scan frame : Cached_symbol.t list -> Cached_symbol.t or_null = function
+let rec find_symbol scan frame : Cached_symbol.t list -> Cached_symbol.t or_null
+  = function
   | [] -> Null
   | cached :: rest ->
     if Frame_scan.symbol_equal scan frame cached.raw

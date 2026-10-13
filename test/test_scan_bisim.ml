@@ -8,11 +8,10 @@ open Binance_client
 
 let recv_ts = Time_ns.of_int_ns_since_epoch 1_791_817_545_000_000_000
 let btc = Symbol.of_string "BTCUSDT"
-
 let show result = [%sexp (result : Feed_normalizer.Output.t list Or_error.t)]
 
-(* Runs the frames through a [frame] normalizer and a [frame_reference] normalizer side
-   by side; returns how many outputs were compared. *)
+(* Runs the frames through a [frame] normalizer and a [frame_reference] normalizer side by
+   side; returns how many outputs were compared. *)
 let run ~create ~snapshots_through_frame frames =
   let fast = create ()
   and reference = create () in
@@ -47,7 +46,8 @@ let%expect_test "every recorded frame gives the same outputs on both paths" =
       run ~create:Feed_normalizer.create_replay ~snapshots_through_frame:true frames
     in
     print_s [%message (stream : Market_data.Stream.t) (live : int) (replay : int)]);
-  [%expect {|
+  [%expect
+    {|
     ((stream Trades) (live 151) (replay 151))
     ((stream Bbo) (live 201) (replay 201))
     ((stream L2) (live 47) (replay 47))
@@ -134,7 +134,8 @@ let%expect_test "corrupted frames" =
                  [%test_result: int]
                    scan.event_time
                    ~expect:(Timestamp_ms.to_int e.event_time)
-               | _ -> raise_s [%message "scanned a depth update Yojson does not see" frame])))));
+               | _ ->
+                 raise_s [%message "scanned a depth update Yojson does not see" frame])))));
   print_s [%message "" ~mutants:(9 * 3_000 : int) ~scanned:(!accepted : int)];
   [%expect {| ((mutants 27000) (scanned 8054)) |}]
 ;;

@@ -19,9 +19,7 @@ let%expect_test "no allocation per frame" =
   let t = Frame_scan.create () in
   List.iter [ Market_data.Stream.Trades; Bbo; L2 ] ~f:(fun stream ->
     let frame = first_frame stream in
-    let words =
-      words_per_call (fun () -> ignore (Frame_scan.scan t frame : bool))
-    in
+    let words = words_per_call (fun () -> ignore (Frame_scan.scan t frame : bool)) in
     print_s [%message (stream : Market_data.Stream.t) (words : int)]);
   let frame = first_frame L2 in
   assert (Frame_scan.scan t frame);
@@ -74,12 +72,15 @@ let%expect_test "fields" =
   let first_levels pos =
     let next = Frame_scan.next_level t frame pos in
     let first = t.level_price, t.level_qty in
-    let rec count pos n = if pos < 0 then n else count (Frame_scan.next_level t frame pos) (n + 1) in
+    let rec count pos n =
+      if pos < 0 then n else count (Frame_scan.next_level t frame pos) (n + 1)
+    in
     first, count next 1
   in
   print_s
     [%message
-      "" ~bids:(first_levels t.bids : (int * int) * int)
+      ""
+        ~bids:(first_levels t.bids : (int * int) * int)
         ~asks:(first_levels t.asks : (int * int) * int)];
   [%expect
     {|
@@ -119,11 +120,23 @@ let%expect_test "frames left to Yojson" =
     ; String.substr_replace_first trade ~pattern:{|"T":5|} ~with_:{|"T":05|}
     ; String.substr_replace_first trade ~pattern:{|"T":5|} ~with_:{|"T":5.0|}
     ; String.substr_replace_first trade ~pattern:{|"p":"1.5"|} ~with_:{|"p":"1e5"|}
-    ; String.substr_replace_first trade ~pattern:{|"p":"1.5"|} ~with_:{|"p":"123456789012"|}
+    ; String.substr_replace_first
+        trade
+        ~pattern:{|"p":"1.5"|}
+        ~with_:{|"p":"123456789012"|}
     ; String.substr_replace_first trade ~pattern:{|"q":"0.1"|} ~with_:{|"q":"0.1","x":{}|}
-    ; String.substr_replace_first trade ~pattern:{|"q":"0.1"|} ~with_:{|"q":"0.1","st":tru|}
-    ; String.substr_replace_first trade ~pattern:{|"q":"0.1"|} ~with_:{|"q":"0.1","nq":null|}
-    ; String.substr_replace_first trade ~pattern:{|"q":"0.1"|} ~with_:{|"q":"0.1","nq":"x"|}
+    ; String.substr_replace_first
+        trade
+        ~pattern:{|"q":"0.1"|}
+        ~with_:{|"q":"0.1","st":tru|}
+    ; String.substr_replace_first
+        trade
+        ~pattern:{|"q":"0.1"|}
+        ~with_:{|"q":"0.1","nq":null|}
+    ; String.substr_replace_first
+        trade
+        ~pattern:{|"q":"0.1"|}
+        ~with_:{|"q":"0.1","nq":"x"|}
     ; String.substr_replace_first trade ~pattern:"aggTrade" ~with_:"aggTrades"
     ; trade ^ " "
     ; String.chop_suffix_exn trade ~suffix:"}"
@@ -133,7 +146,8 @@ let%expect_test "frames left to Yojson" =
     ; ""
     ]
     ~f:(fun frame -> printf "%b %s\n" (Frame_scan.scan t frame) frame);
-  [%expect {|
+  [%expect
+    {|
     true {"e":"aggTrade","E":1,"a":2,"s":"BTCUSDT","p":"1.5","q":"0.1","f":3,"l":4,"T":5,"m":true}
     true {"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","E":1,"a":2,"s":"BTCUSDT","p":"1.5","q":"0.1","f":3,"l":4,"T":5,"m":true}}
     false {"result":null,"id":1}
@@ -181,12 +195,25 @@ let%expect_test "decimal agrees with Fixed_decimal.of_string" =
     if scanned <> expected
     then raise_s [%message "mismatch" s (scanned : int) (expected : int)]);
   List.iter
-    [ "0.001"; "-12.5"; "+3"; "5."; ".5"; "."; "-"; ""; "1.2.3"; "007.100000009"
-    ; "46116860184.27387903"; "46116860184.27387904"; "99999999999"; "100000000000"
+    [ "0.001"
+    ; "-12.5"
+    ; "+3"
+    ; "5."
+    ; ".5"
+    ; "."
+    ; "-"
+    ; ""
+    ; "1.2.3"
+    ; "007.100000009"
+    ; "46116860184.27387903"
+    ; "46116860184.27387904"
+    ; "99999999999"
+    ; "100000000000"
     ]
     ~f:(fun s ->
       printf "%-24s %d\n" s (Frame_scan.decimal s ~pos:0 ~stop:(String.length s)));
-  [%expect {|
+  [%expect
+    {|
     0.001                    100000
     -12.5                    -1250000000
     +3                       300000000

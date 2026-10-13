@@ -223,7 +223,8 @@ let[@zero_alloc] decimal s ~pos ~stop =
   then (
     i <- i + 1;
     while i < stop && is_digit (String.unsafe_get s i) do
-      if frac_digits < 8 then frac <- (frac * 10) + (Char.to_int (String.unsafe_get s i) - 48);
+      if frac_digits < 8
+      then frac <- (frac * 10) + (Char.to_int (String.unsafe_get s i) - 48);
       frac_digits <- frac_digits + 1;
       i <- i + 1
     done);
@@ -254,11 +255,7 @@ let[@zero_alloc] int_value s ~pos ~stop =
     v <- (v * 10) + (Char.to_int (String.unsafe_get s i) - 48);
     i <- i + 1
   done;
-  if i <> stop || i = first || i - first > 18
-  then bad
-  else if negative
-  then -v
-  else v
+  if i <> stop || i = first || i - first > 18 then bad else if negative then -v else v
 ;;
 
 (* [i] is the [[] of a [["price","qty"]] level: the offset after its [], or [-1]. *)

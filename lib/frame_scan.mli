@@ -57,20 +57,20 @@ val create : unit -> t
 val scan : t -> string -> bool
 [@@zero_alloc]
 
-(** [next_level t frame pos] reads the [[price, qty]] level after [pos] into
-    [level_price] and [level_qty] and returns the position to pass next, or [-1] at the
-    end of the array. Start with [pos = t.bids] or [pos = t.asks] after a successful
-    {!scan} of a [Depth_update]. *)
+(** [next_level t frame pos] reads the [[price, qty]] level after [pos] into [level_price]
+    and [level_qty] and returns the position to pass next, or [-1] at the end of the
+    array. Start with [pos = t.bids] or [pos = t.asks] after a successful {!scan} of a
+    [Depth_update]. *)
 val next_level : t -> string -> int -> int
 [@@zero_alloc]
 
-(** [symbol_equal t frame s] is whether the [s] field of the scanned frame is the bytes
-    of [s]. *)
+(** [symbol_equal t frame s] is whether the [s] field of the scanned frame is the bytes of
+    [s]. *)
 val symbol_equal : t -> string -> string -> bool
 [@@zero_alloc]
 
 (** Decimal string (without quotes) in [s] from [pos] to [stop], in units of [10^-8],
-    under the rules of [Fixed_decimal.of_string]; [Int.min_value] when it is malformed
-    or out of range. Exposed for tests. *)
+    under the rules of [Fixed_decimal.of_string]; [Int.min_value] when it is malformed or
+    out of range. Exposed for tests. *)
 val decimal : string -> pos:int -> stop:int -> int
 [@@zero_alloc]
