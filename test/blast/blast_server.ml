@@ -5,6 +5,7 @@ type t =
   { tcp : (Socket.Address.Inet.t, int) Tcp.Server.t
   ; block : string
   ; per_write : int
+  ; greeting : string
   ; mutable writer : Writer.t option
   ; mutable ready : unit Ivar.t
   }
@@ -49,8 +50,10 @@ let handle t reader writer =
         Upgrade: websocket\r\n\
         Connection: Upgrade\r\n\
         Sec-WebSocket-Accept: %s\r\n\
-        \r\n"
-       (Websocket.sec_websocket_accept_header_value ~sec_websocket_key:key));
+        \r\n\
+        %s"
+       (Websocket.sec_websocket_accept_header_value ~sec_websocket_key:key)
+       t.greeting);
   let ws = Websocket.create ~opcode:`Text ~role:Server reader writer in
   (* Keep an unfilled ivar that [ready] may already be waiting on. *)
   if Ivar.is_full t.ready then t.ready <- Ivar.create ();
@@ -61,7 +64,7 @@ let handle t reader writer =
     Ivar.fill_if_empty ready ())
 ;;
 
-let start ~frame ~per_write () =
+let start ?(greeting = []) ~frame ~per_write () =
   let block = String.concat (List.init per_write ~f:(fun _ -> encode_frame frame)) in
   let t_ref = ref None in
   let%map tcp =
@@ -70,7 +73,8 @@ let start ~frame ~per_write () =
       Tcp.Where_to_listen.of_port_chosen_by_os
       (fun _ reader writer -> handle (Option.value_exn !t_ref) reader writer)
   in
-  let t = { tcp; block; per_write; writer = None; ready = Ivar.create () } in
+  let greeting = String.concat (List.map greeting ~f:encode_frame) in
+  let t = { tcp; block; per_write; greeting; writer = None; ready = Ivar.create () } in
   t_ref := Some t;
   t
 ;;

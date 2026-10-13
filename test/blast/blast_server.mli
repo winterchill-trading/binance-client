@@ -10,8 +10,10 @@ open Async
 type t
 
 (** [start ~frame ~per_write ()] listens on a port chosen by the OS. [blast] writes
-    [per_write] copies of [frame] per socket write. *)
-val start : frame:string -> per_write:int -> unit -> t Deferred.t
+    [per_write] copies of [frame] per socket write. [greeting] frames (default none) are
+    written on every connection in the same write as the upgrade response, so they reach
+    the client together with the end of the handshake. *)
+val start : ?greeting:string list -> frame:string -> per_write:int -> unit -> t Deferred.t
 
 val port : t -> int
 
