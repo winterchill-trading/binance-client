@@ -43,6 +43,12 @@ val instrument : Symbol.t -> Market_data.Instrument.t
     unless [t] is from {!create_replay}. *)
 val frame : t -> recv_ts:Time_ns.t -> string -> Output.t list Or_error.t
 
+(** [frame] without the {!Frame_scan} fast path: every frame is decoded with Yojson.
+    [frame] reads [aggTrade], [bookTicker] and [depthUpdate] frames with the scanner and
+    falls back to this for everything else; the two give the same outputs. Kept as the
+    reference for tests and benchmarks. *)
+val frame_reference : t -> recv_ts:Time_ns.t -> string -> Output.t list Or_error.t
+
 (** Applies a depth snapshot to the book of [symbol] and replays the buffered events.
     [`Gap] when the snapshot does not join them (fetch a newer one). [`Ignored] when the
     symbol has no book or its book is already synced. *)

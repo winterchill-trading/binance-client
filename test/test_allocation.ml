@@ -50,11 +50,11 @@ let%expect_test "minor words per Live_feed message" =
           ~bytes_per_frame:(bytes / n : int)]);
   [%expect
     {|
-    ((stream Trades) (frames 151) (words_per_frame 436) (max_words 439)
+    ((stream Trades) (frames 151) (words_per_frame 20) (max_words 118)
      (bytes_per_frame 203))
-    ((stream Bbo) (frames 201) (words_per_frame 416) (max_words 418)
+    ((stream Bbo) (frames 201) (words_per_frame 17) (max_words 118)
      (bytes_per_frame 201))
-    ((stream L2) (frames 46) (words_per_frame 21156) (max_words 116600)
+    ((stream L2) (frames 46) (words_per_frame 13943) (max_words 77832)
      (bytes_per_frame 4647))
     ((stream Funding) (frames 60) (words_per_frame 415) (max_words 421)
      (bytes_per_frame 219))

@@ -8,22 +8,43 @@ module Output = struct
   [@@deriving sexp_of]
 end
 
+(* A symbol seen by the scanner: its bytes in the frame, and the values built from them
+   once. *)
+module Cached_symbol = struct
+  type t =
+    { raw : string
+    ; symbol : Symbol.t
+    ; instrument : Market_data.Instrument.t
+    }
+end
+
 type t =
   { books : Local_book.t Symbol.Table.t
   ; replay : bool
   ; mutable last_l2_symbol : Symbol.t option
+  ; scan : Frame_scan.t
+  ; mutable symbols : Cached_symbol.t list
+  ; mutable n_symbols : int
   }
+
+let make ~replay books =
+  { books
+  ; replay
+  ; last_l2_symbol = None
+  ; scan = Frame_scan.create ()
+  ; symbols = []
+  ; n_symbols = 0
+  }
+;;
 
 let create ~l2_symbols =
   let books = Symbol.Table.create () in
   List.iter l2_symbols ~f:(fun symbol ->
     Hashtbl.set books ~key:symbol ~data:(Local_book.create symbol));
-  { books; replay = false; last_l2_symbol = None }
+  make ~replay:false books
 ;;
 
-let create_replay () =
-  { books = Symbol.Table.create (); replay = true; last_l2_symbol = None }
-;;
+let create_replay () = make ~replay:true (Symbol.Table.create ())
 
 let instrument symbol = Market_data.Instrument.create Binance (Symbol.to_string symbol)
 let ts = Timestamp_ms.to_time_ns
@@ -147,7 +168,7 @@ let recorded_snapshot t ~recv_ts depth : Output.t list =
      | `Ignored -> [])
 ;;
 
-let frame t ~recv_ts frame : Output.t list Or_error.t =
+let frame_reference t ~recv_ts frame : Output.t list Or_error.t =
   match decode frame with
   | Error _ as error -> error
   | Ok (`Response (Result _)) -> Ok []
@@ -163,6 +184,100 @@ let frame t ~recv_ts frame : Output.t list Or_error.t =
        | Depth_update e -> depth_update t ~recv_ts e
        | Depth_snapshot depth when t.replay -> recorded_snapshot t ~recv_ts depth
        | Depth_snapshot _ | Unknown _ -> [])
+;;
+
+(* The scanned path. Builds what [frame_reference] builds from the fields {!Frame_scan}
+   read; the fixture test checks both agree on every recorded frame. *)
+
+let max_cached_symbols = 256
+
+let rec find_symbol scan frame : Cached_symbol.t list -> Cached_symbol.t or_null = function
+  | [] -> Null
+  | cached :: rest ->
+    if Frame_scan.symbol_equal scan frame cached.raw
+    then This cached
+    else find_symbol scan frame rest
+;;
+
+let scanned_symbol t frame : Cached_symbol.t =
+  match find_symbol t.scan frame t.symbols with
+  | This cached -> cached
+  | Null ->
+    let raw = String.sub frame ~pos:t.scan.symbol_pos ~len:t.scan.symbol_len in
+    let symbol = Symbol.of_string raw in
+    let cached = { Cached_symbol.raw; symbol; instrument = instrument symbol } in
+    if t.n_symbols < max_cached_symbols
+    then (
+      t.symbols <- cached :: t.symbols;
+      t.n_symbols <- t.n_symbols + 1);
+    cached
+;;
+
+let ms x = ts (Timestamp_ms.of_int x)
+
+let scanned_levels t frame pos =
+  let rec go pos acc =
+    let next = Frame_scan.next_level t.scan frame pos in
+    if next < 0
+    then List.rev acc
+    else
+      go
+        next
+        ({ Book_level.price = Price.of_units t.scan.level_price
+         ; qty = Size.of_units t.scan.level_qty
+         }
+         :: acc)
+  in
+  go pos []
+;;
+
+let scanned t ~recv_ts frame : Output.t list =
+  let s = t.scan in
+  let cached = scanned_symbol t frame in
+  match s.kind with
+  | Agg_trade ->
+    [ Event
+        (Trade
+           { instrument = cached.instrument
+           ; exch_ts = ms s.transaction_time
+           ; recv_ts
+           ; price = Price.of_units s.price
+           ; size = Size.of_units s.qty
+           ; side = (if s.buyer_is_maker then Sell else Buy)
+           ; trade_id = Int.to_string s.agg_trade_id
+           })
+    ]
+  | Book_ticker ->
+    [ Event
+        (Bbo
+           { instrument = cached.instrument
+           ; exch_ts = ms s.transaction_time
+           ; recv_ts
+           ; bid_price = Price.of_units s.bid_price
+           ; bid_size = Size.of_units s.bid_qty
+           ; ask_price = Price.of_units s.ask_price
+           ; ask_size = Size.of_units s.ask_qty
+           })
+    ]
+  | Depth_update ->
+    depth_update
+      t
+      ~recv_ts
+      { event_time = Timestamp_ms.of_int s.event_time
+      ; transaction_time = Timestamp_ms.of_int s.transaction_time
+      ; symbol = cached.symbol
+      ; first_update_id = s.first_update_id
+      ; final_update_id = s.final_update_id
+      ; prev_final_update_id = s.prev_final_update_id
+      ; bids = scanned_levels t frame s.bids
+      ; asks = scanned_levels t frame s.asks
+      }
+;;
+
+let frame t ~recv_ts frame =
+  if Frame_scan.scan t.scan frame
+  then Ok (scanned t ~recv_ts frame)
+  else frame_reference t ~recv_ts frame
 ;;
 
 let is_synced t symbol =
