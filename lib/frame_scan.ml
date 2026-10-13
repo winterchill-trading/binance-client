@@ -99,7 +99,7 @@ let[@zero_alloc] [@inline] get s i =
 
 let[@zero_alloc] [@inline] is_digit c = Char.( >= ) c '0' && Char.( <= ) c '9'
 
-let[@zero_alloc] is_lit s pos lit =
+let[@zero_alloc] [@inline] is_lit s pos lit =
   let k = String.length lit in
   if pos < 0 || pos + k > String.length s
   then false
@@ -142,7 +142,7 @@ let[@zero_alloc] key_id s pos len ~bare =
 
 (* [i] is an opening quote; the offset of the closing quote, or [-1] on an escape, a
    control character or the end of the frame. *)
-let[@zero_alloc] string_end s i =
+let[@zero_alloc] [@inline] string_end s i =
   let n = String.length s in
   let mutable j = i + 1 in
   let mutable result = -1 in
@@ -160,9 +160,10 @@ let[@zero_alloc] string_end s i =
   result
 ;;
 
-let[@zero_alloc] digits_end s i =
+let[@zero_alloc] [@inline] digits_end s i =
+  let n = String.length s in
   let mutable j = i in
-  while is_digit (get s j) do
+  while j < n && is_digit (String.unsafe_get s j) do
     j <- j + 1
   done;
   j
@@ -170,10 +171,13 @@ let[@zero_alloc] digits_end s i =
 
 (* A JSON number, [true], [false] or [null] at [i]: the offset after it, or [-1]. *)
 let[@zero_alloc] scalar_end s i =
-  if is_lit s i "true" || is_lit s i "null"
-  then i + 4
-  else if is_lit s i "false"
-  then i + 5
+  let c = get s i in
+  if Char.equal c 't'
+  then if is_lit s i "true" then i + 4 else -1
+  else if Char.equal c 'n'
+  then if is_lit s i "null" then i + 4 else -1
+  else if Char.equal c 'f'
+  then if is_lit s i "false" then i + 5 else -1
   else (
     let mutable j = i in
     if Char.equal (get s j) '-' then j <- j + 1;
@@ -196,13 +200,15 @@ let[@zero_alloc] scalar_end s i =
 ;;
 
 let[@zero_alloc] decimal s ~pos ~stop =
-  let mutable i = pos in
+  (* Clamped so that the digit loops can read without bounds checks. *)
+  let stop = Int.min stop (String.length s) in
+  let mutable i = Int.max pos 0 in
   let negative = Char.equal (get s i) '-' in
   if i < stop && (negative || Char.equal (get s i) '+') then i <- i + 1;
   let mutable whole = 0 in
   let mutable significant = 0 in
   let mutable int_digits = 0 in
-  while i < stop && is_digit (get s i) do
+  while i < stop && is_digit (String.unsafe_get s i) do
     let d = Char.to_int (String.unsafe_get s i) - 48 in
     int_digits <- int_digits + 1;
     if significant > 0 || d <> 0
@@ -216,7 +222,7 @@ let[@zero_alloc] decimal s ~pos ~stop =
   if i < stop && Char.equal (get s i) '.'
   then (
     i <- i + 1;
-    while i < stop && is_digit (get s i) do
+    while i < stop && is_digit (String.unsafe_get s i) do
       if frac_digits < 8 then frac <- (frac * 10) + (Char.to_int (String.unsafe_get s i) - 48);
       frac_digits <- frac_digits + 1;
       i <- i + 1
@@ -238,12 +244,13 @@ let[@zero_alloc] decimal s ~pos ~stop =
 
 (* A JSON integer that fits in an [int] (at most 18 digits), spanning [pos, stop). *)
 let[@zero_alloc] int_value s ~pos ~stop =
-  let mutable i = pos in
+  let stop = Int.min stop (String.length s) in
+  let mutable i = Int.max pos 0 in
   let negative = Char.equal (get s i) '-' in
   if negative then i <- i + 1;
   let first = i in
   let mutable v = 0 in
-  while i < stop && is_digit (get s i) do
+  while i < stop && is_digit (String.unsafe_get s i) do
     v <- (v * 10) + (Char.to_int (String.unsafe_get s i) - 48);
     i <- i + 1
   done;
