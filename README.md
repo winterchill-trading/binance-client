@@ -431,6 +431,8 @@ commission rate endpoints.
   the snapshot with replayed events, deltas, a gap, other symbols, `reset`;
 - `Feed_normalizer` on recorded mainnet frames (`test/fixtures`, see below): every frame
   decodes, with per-stream counts, and the minor words allocated per message;
+- `Frame_scan` and the scanned path of `Feed_normalizer.frame` against the Yojson path
+  (see Performance);
 - the same fixtures through `Raw_normalizer` (one fresh normalizer per stream, as
   `rebuild-norm` does per recorded series): identical counts, the snapshot first, and no
   deltas after a `disconnect` until another snapshot;
@@ -472,23 +474,38 @@ deltas (the 5 earlier diffs ask for a snapshot, none is a gap).
 
 ## Performance
 
-`bench/main.exe` (core_bench) runs `Feed_normalizer.frame` over the recorded frames:
+`Feed_normalizer.frame` reads `aggTrade`, `bookTicker` and `depthUpdate` frames with
+`Frame_scan`, a `[@zero_alloc]` scanner that walks the frame once and writes the fields
+into a reused record (no JSON tree). It is strict: another event type, a subscription
+response, whitespace, an escaped string, a decimal sent as a JSON number, a missing or
+repeated field or an out-of-range value make it decline the frame, and the frame goes
+through the Yojson decoders as before (`frame_reference`, which every mark-price frame
+also takes). `test_scan_bisim.ml` runs every recorded frame through both paths (live and
+replay normalizers) and 27,000 corrupted frames, and requires identical outputs;
+`test_frame_scan.ml` pins 0 words per scanned frame and checks the decimal parser against
+`Fixed_decimal.of_string` with Quickcheck.
+
+`bench/main.exe` (core_bench) runs both paths over the recorded frames, plus the scanner
+alone:
 
 ```sh
-dune exec ./bench/main.exe -- -quota 2 -ascii
+dune exec ./bench/main.exe -- -quota 4 -ascii
 ```
 
-On an Apple M-series laptop:
+Dev profile on an Apple M-series laptop (arm64; CI runs amd64). The release and
+`OCAMLPARAM='_,O3=1'` builds gave the same words and times within noise:
 
-| Benchmark | Time | Minor words |
-| --- | --- | --- |
-| `trades` (per frame, ~200 bytes) | 2.5 us | 482 |
-| `bbo` (per frame) | 2.6 us | 475 |
-| `funding` (per frame) | 2.6 us | 478 |
-| `l2 replay` (46 frames, ~4.6 KB each, with the snapshot) | 4.7 ms | 1.28 M |
+| Benchmark | Yojson path | Scanned path | Minor words (Yojson / scanned) |
+| --- | --- | --- | --- |
+| `trades` (per frame, ~200 bytes) | 2.48 us | 0.49 us | 440 / 23.6 |
+| `bbo` (per frame) | 2.39 us | 0.43 us | 420 / 20.5 |
+| `l2 replay` (46 frames, ~4.6 KB each, with the snapshot) | 3.36 ms | 1.90 ms | 997 k / 665 k |
+| `funding` (per frame, always Yojson) | 2.72 us | | 419 |
 
-About 2.4 words per input byte for the small frames and 6 per byte for depth diffs,
-almost all of it `Yojson.Safe` trees and decimal parsing. The expect test in
-`test_allocation.ml` pins the same counts per Live_feed message: 478 words (trades), 472
-(BBO), 474 (funding) and 27,087 on average for depth diffs, up to 150,200 for the
-largest.
+`Frame_scan.scan` alone takes about 0.42 us on a trade or BBO frame and 11.6 us on a
+~4.6 KB depth diff, allocating nothing (the bench rows show 3 words of harness overhead).
+What the scanned path still allocates is the output: the event records, the trade id
+string and the result list. On depth diffs the rest is `Local_book` and the level lists.
+The expect test in `test_allocation.ml` pins the counts per Live_feed message: 20 words
+(trades), 17 (BBO), 415 (funding) and 13,943 on average for depth diffs, up to 77,832 for
+the largest.
