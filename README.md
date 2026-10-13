@@ -205,6 +205,8 @@ val close : t -> unit Deferred.t
   client also sends a ping frame every 30s, so a dead socket is replaced after two
   silent intervals; pass `` `None `` to rely on the server alone.
 - `events` is buffered without pushback; keep reading.
+- Frames come from `Venue_net.Ws_client` through `on_message` (no second pipe); frames
+  read before `connect` returns are queued and delivered first, in order.
 
 ### `Local_book` and `Book_sync`
 
@@ -440,6 +442,9 @@ commission rate endpoints.
   fixtures in the recorder layout (`recv_ts` = event time `E`): 5 files, 459 frames, 450
   events (150 trades, 200 BBOs, 1 snapshot and 40 deltas, 59 funding records), clean
   event logs; a non-empty output directory is refused;
+- words per frame `Live_feed` and `Market_ws` add on top of the websocket, against a
+  local server that writes pre-encoded frames; `Market_ws` frames that arrive with the
+  upgrade response come out of `events` first and in order;
 - `Live_feed` against a scripted local websocket server: a malformed frame is counted in
   `stats` and skipped; a dropped connection is replaced on a synthetic clock (nothing
   before 0.4s, reconnected and resubscribed by 0.6s, `recv_ts` taken from that clock);
@@ -509,3 +514,31 @@ string and the result list. On depth diffs the rest is `Local_book` and the leve
 The expect test in `test_allocation.ml` pins the counts per Live_feed message: 20 words
 (trades), 17 (BBO), 415 (funding) and 13,943 on average for depth diffs, up to 77,832 for
 the largest.
+
+### Websocket delivery
+
+`Live_feed` and `Market_ws` take frames from `Venue_net.Ws_client` through `on_message`,
+straight from the connection's frame pipe, instead of reading `Ws_client.messages` one
+frame at a time (about 13 words per frame for the extra pipe hop). `on_connect` still
+runs before the first frame of each connection, so `Live_feed`'s `Resync` gap keeps
+coming before the frames of the new connection. `User_ws` (account events, a few per
+second at most, and a listen-key renewal that swaps connections) still reads `messages`.
+`test_live_feed_words.ml` pins the words a frame costs in each on top of the websocket
+transport: `Live_feed` 38 before and 25 after, `Market_ws` 429 and 416 (Yojson decode).
+
+`dune exec ./bench/feed/feed.exe` runs both against an in-process websocket server
+(`test/blast/`) that writes one pre-encoded `aggTrade` frame (205 bytes) 1,000 per write
+(burst) or one per write, next to a bare `Ws_client` that only counts frames (the
+floor). Release profile, arm64 laptop (CI is amd64), best of five runs, two runs each;
+times vary by 10% or more between runs, words are exact:
+
+| | before (`messages`) | after (`on_message`) | words before | words after |
+| --- | ---: | ---: | ---: | ---: |
+| burst, ws floor | 146 ns | 145 to 210 ns | 35.5 | 35.5 |
+| burst, `Live_feed` | 726 to 729 ns (1.37 M frames/s) | 689 to 733 ns (1.36 to 1.45 M frames/s) | 73.4 | 60.4 |
+| burst, `Market_ws` | 2.90 us | 2.87 to 2.96 us | 464.4 | 451.4 |
+| one per write, ws floor | 2.74 to 2.87 us | 2.56 to 4.24 us | 189.1 | 189.1 |
+| one per write, `Live_feed` | 3.18 to 3.43 us | 3.32 to 4.26 us | 229.0 | 216.0 |
+
+The words drop by exactly the hop; the time per frame is dominated by the socket reads
+(one per write) or by decoding, so frames/s moved within the noise.
