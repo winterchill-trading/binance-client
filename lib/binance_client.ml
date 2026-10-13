@@ -3,6 +3,7 @@ module Rest = Rest
 module Local_book = Local_book
 module Market_ws = Market_ws
 module Book_sync = Book_sync
+module Frame_scan = Frame_scan
 module Feed_normalizer = Feed_normalizer
 module Raw_normalizer = Raw_normalizer
 module Live_feed = Live_feed
