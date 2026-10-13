@@ -27,6 +27,8 @@ let%expect_test "words per frame added by the live feed and the market websocket
       "words per frame over the floor"
         ~live_feed:(over_floor feed : int)
         ~market_ws:(over_floor market_ws : int)];
+  (* live_feed was 38 while it read [Ws_client.messages] one frame at a time;
+     [on_message] drops the pipe hop's 13 words. *)
   [%expect {| ("words per frame over the floor" (live_feed 25) (market_ws 429)) |}];
   Blast_server.close server
 ;;
