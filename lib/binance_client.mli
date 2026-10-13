@@ -16,6 +16,9 @@ module Market_ws = Market_ws
 (** Async driver of a [Local_book]: snapshots, resyncs and book reports. *)
 module Book_sync = Book_sync
 
+(** Zero-allocation scanner for aggTrade, bookTicker and depthUpdate frames. *)
+module Frame_scan = Frame_scan
+
 (** Binance market frames to normalized [Market_data] records (pure). *)
 module Feed_normalizer = Feed_normalizer
 
