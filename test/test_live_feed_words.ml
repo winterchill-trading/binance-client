@@ -27,6 +27,6 @@ let%expect_test "words per frame added by the live feed and the market websocket
       "words per frame over the floor"
         ~live_feed:(over_floor feed : int)
         ~market_ws:(over_floor market_ws : int)];
-  [%expect {| ("words per frame over the floor" (live_feed 38) (market_ws 429)) |}];
+  [%expect {| ("words per frame over the floor" (live_feed 25) (market_ws 429)) |}];
   Blast_server.close server
 ;;

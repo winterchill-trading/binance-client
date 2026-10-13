@@ -166,19 +166,22 @@ let connect t ~stream symbols =
         Hash_set.clear t.synced));
     subscribe t client names
   in
+  (* Frames go to [on_frame] straight from the connection ([on_message]) rather than
+     through [Ws_client.messages], which saves the pipe hop, about 13 words per frame.
+     [on_connect] still runs before the first frame of each connection, so a
+     reconnection's gap is written before any of its frames are read. *)
   let%map client =
     Ws_client.connect
       ~ping:(`Frame (Time_ns.Span.of_int_sec 30))
       ~on_connect
+      ~on_message:(on_frame t ~stream)
       ~log_name:(sprintf "binance feed %s" (Stream.to_string stream))
       ~time_source:t.time_source
       ~url:(Config.combined_stream_uri t.config ~route)
       ()
     >>| ok_exn
   in
-  t.clients <- client :: t.clients;
-  don't_wait_for
-    (Pipe.iter_without_pushback (Ws_client.messages client) ~f:(on_frame t ~stream))
+  t.clients <- client :: t.clients
 ;;
 
 let close t =
